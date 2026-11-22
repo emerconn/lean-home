@@ -1,0 +1,8 @@
+lean-home
+Copyright 2026 Emerson Connelly
+
+This product includes software derived from Home Assistant
+(https://github.com/home-assistant/core), Copyright Home Assistant Core Authors,
+licensed under the Apache License, Version 2.0:
+  - bench/patches/homeassistant-init-lazy-httpx2.py (modified homeassistant/__init__.py)
+  - bench/patches/*.diff (patches against Home Assistant source files)

@@ -1,0 +1,32 @@
+## probe run 1 (2026.11.2 + slim-B)
+bare         anon_MiB=  12.0 peak_MiB=  14.4 modules=157 litellm=False failed=[]
+core         anon_MiB=  52.7 peak_MiB=  63.7 modules=704 litellm=False failed=[]
+helpers      anon_MiB=  81.4 peak_MiB=  95.6 modules=931 litellm=False failed=[]
+i-mqtt       anon_MiB= 157.6 peak_MiB= 191.2 modules=2233 litellm=False failed=[]
+i-shelly     anon_MiB= 184.8 peak_MiB= 224.0 modules=2313 litellm=False failed=[]
+i-hue        anon_MiB= 110.2 peak_MiB= 135.9 modules=1463 litellm=False failed=[]
+i-esphome    anon_MiB= 191.3 peak_MiB= 232.7 modules=2464 litellm=False failed=[]
+i-met        anon_MiB= 105.2 peak_MiB= 133.4 modules=1294 litellm=False failed=[]
+all-five     anon_MiB= 222.1 peak_MiB= 268.5 modules=2990 litellm=False failed=[]
+## probe run 2 (2026.11.2 + slim-B)
+bare         anon_MiB=  12.0 peak_MiB=  14.6 modules=157 litellm=False failed=[]
+core         anon_MiB=  52.7 peak_MiB=  63.7 modules=704 litellm=False failed=[]
+helpers      anon_MiB=  81.4 peak_MiB=  95.3 modules=931 litellm=False failed=[]
+i-mqtt       anon_MiB= 157.5 peak_MiB= 189.5 modules=2233 litellm=False failed=[]
+i-shelly     anon_MiB= 184.8 peak_MiB= 224.4 modules=2313 litellm=False failed=[]
+i-hue        anon_MiB= 110.2 peak_MiB= 136.3 modules=1463 litellm=False failed=[]
+i-esphome    anon_MiB= 191.2 peak_MiB= 231.8 modules=2464 litellm=False failed=[]
+i-met        anon_MiB= 105.1 peak_MiB= 133.2 modules=1294 litellm=False failed=[]
+all-five     anon_MiB= 222.1 peak_MiB= 269.1 modules=2990 litellm=False failed=[]
+## end-to-end run 1
+ha-2611	ready_ms=3421	anon_MiB=326.2	file_MiB=30.7	peak_MiB=388.1	idle_cpu_pct=0.02	oom_kills=0
+ha-2611	registry_entities=79	states=16
+ha-2611-slim	ready_ms=4218	anon_MiB=330.1	file_MiB=30.7	peak_MiB=404.5	idle_cpu_pct=0.02	oom_kills=0
+ha-2611-slim	registry_entities=79	states=16
+## end-to-end run 2
+ha-2611	ready_ms=4429	anon_MiB=330.6	file_MiB=30.7	peak_MiB=411.2	idle_cpu_pct=0.02	oom_kills=0
+ha-2611	registry_entities=79	states=16
+ha-2611-slim	ready_ms=3397	anon_MiB=332.1	file_MiB=30.7	peak_MiB=389.2	idle_cpu_pct=0.02	oom_kills=0
+ha-2611-slim	registry_entities=79	states=16
+ha-2611 log errors/warnings: 0
+ha-2611-slim log errors/warnings: 0

@@ -1,0 +1,14 @@
+## run 1
+hars-nopy	ready_ms=1014	anon_MiB=1.3	file_MiB=0.0	peak_MiB=2.6	idle_cpu_pct=0.00	oom_kills=0
+hars-nopy	states=6
+hars-py	ready_ms=8030	anon_MiB=246.6	file_MiB=1.6	peak_MiB=264.3	idle_cpu_pct=0.09	oom_kills=0
+hars-py	states=76
+ha-core	ready_ms=6489	anon_MiB=324.2	file_MiB=37.5	peak_MiB=413.4	idle_cpu_pct=0.02	oom_kills=0
+ha-core	registry_entities=63	states=16
+## run 2
+hars-nopy	ready_ms=1014	anon_MiB=1.3	file_MiB=0.0	peak_MiB=2.6	idle_cpu_pct=0.00	oom_kills=0
+hars-nopy	states=6
+hars-py	ready_ms=8038	anon_MiB=243.3	file_MiB=0.1	peak_MiB=262.8	idle_cpu_pct=0.08	oom_kills=0
+hars-py	states=76
+ha-core	ready_ms=6499	anon_MiB=323.2	file_MiB=37.5	peak_MiB=418.4	idle_cpu_pct=0.02	oom_kills=0
+ha-core	registry_entities=63	states=16

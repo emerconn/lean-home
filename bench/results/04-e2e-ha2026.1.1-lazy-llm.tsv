@@ -1,0 +1,8 @@
+ha-core	ready_ms=7720	anon_MiB=318.8	file_MiB=37.5	peak_MiB=415.4	idle_cpu_pct=0.03	oom_kills=0
+ha-core	registry_entities=63	states=16
+ha-core-nollm	ready_ms=4014	anon_MiB=226.0	file_MiB=22.2	peak_MiB=292.2	idle_cpu_pct=0.02	oom_kills=0
+ha-core-nollm	registry_entities=63	states=16
+ha-core	ready_ms=6890	anon_MiB=315.6	file_MiB=37.5	peak_MiB=410.7	idle_cpu_pct=0.02	oom_kills=0
+ha-core	registry_entities=63	states=16
+ha-core-nollm	ready_ms=3001	anon_MiB=240.1	file_MiB=22.2	peak_MiB=297.4	idle_cpu_pct=0.02	oom_kills=0
+ha-core-nollm	registry_entities=63	states=16

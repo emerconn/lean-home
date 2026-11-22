@@ -1,0 +1,5 @@
+hars-py: cgroup gone (crashed/OOM?)
+hars-py	states=?
+run.sh: line 29: 67820 Killed  systemd-run --user --scope --unit=bench-hars-py -p MemoryMax=256M ... hars-py   (kernel: memcg OOM, anon-rss 246336kB)
+ha-core: cgroup gone (crashed/OOM?)
+ha-core	registry_entities=?	states=?
