@@ -38,8 +38,8 @@ What helps more, in order:
 
 1. **Rebuild less.** Build geometry once per layer and keep it, instead of regenerating the whole print
    (gcode-preview rebuilds everything; a layer-at-a-time cache makes each update O(new layer)).
-   The homelab page approximates this: a full rebuild only when a new layer starts, with the moves since
-   then drawn as cheap lines every 0.5 s.
+   The homelab page approximates this: a full rebuild only when a new layer starts. Each second it draws
+   the moves since then up to the nozzle as instanced boxes (point 2 below).
 2. **Let the GPU make the tubes.** Instanced rendering: one tube mesh, one per-segment
    (start, end, width) attribute. The CPU only writes 7 floats per segment and the GPU does the rest,
    so rebuild cost falls to the size of that buffer.
