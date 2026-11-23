@@ -62,11 +62,49 @@ This is the next thing to build and measure.
 | ESPHome | +88 MiB | Native (protobuf API) |
 | Shelly | +82 MiB | Native |
 | Hue | +7 MiB | Native (common), cheap in Python too |
-| Matter | — | Native via `rs-matter` |
+| Matter | — | Client of the Matter Server sidecar first, `rs-matter` controller later (see [Radio sidecars](#radio-sidecars-matter-z-wave-zigbee)) |
 | Cloud/HTTP polling integrations (e.g. Met) | +1 MiB | Leave in the Python host |
 
 The protocol integrations are both the most popular and the most expensive in Python, so porting
 them gives the biggest win. Port the rest based on which ones users actually load.
+
+### Radio sidecars: Matter, Z-Wave, Zigbee
+
+Stock HA doesn't contain the Matter or Z-Wave stacks. Its `matter` and `zwave_js` integrations are
+**WebSocket clients** of separate servers. lean-home does the same first, so both work on day one
+with no protocol code of our own, then replaces sidecars only where it pays off.
+
+| | Sidecar today (license) | Rust path | Effort |
+|---|---|---|---|
+| **Matter** | `python-matter-server` (Apache 2.0, Open Home Foundation), on the Matter SDK `connectedhomeip` (Apache 2.0) | `rs-matter` (Apache 2.0, under project-chip). Mostly device-side; how complete its **controller** side is (commissioning over BLE, CASE sessions, fabric management, cluster client) is unverified, so check before planning on it. Cluster definitions are generated from the SDK's XML | Large, with a head start |
+| **Z-Wave** | Z-Wave JS: driver (MIT), `zwave-js-server` (Apache 2.0) or Z-Wave JS UI (MIT, adds a web UI) | Only small early crates exist. The hard part is device quirks: Z-Wave JS's **device config database** (thousands of MIT-licensed JSON files) is reusable from Rust rather than rewritten. Serial API spec public since 2020; S0/S2 security needed | Very large; keep the sidecar |
+| **Zigbee** | Zigbee2MQTT (GPL-3.0) | Covered by native MQTT discovery; ZHA is Python and stays in the plugin host | None needed |
+
+Order: speak both servers' WebSocket APIs → Matter in Rust (`rs-matter` controller) → Z-Wave last
+or never. Rough sidecar footprints, **estimates, not measured** under our rules: Matter Server
+~60–120 MB, Z-Wave JS Server ~50–100 MB, Z-Wave JS UI ~100–200 MB. Native Rust replacements would
+likely be a few MB each; measure before claiming.
+
+### Voice: Assist pipeline and Wyoming
+
+HA's voice assistant (Assist) chains wake word → speech-to-text → intent → text-to-speech. Local
+engines plug in over the **Wyoming protocol**: JSON-lines events plus raw PCM chunks over TCP,
+simple enough to implement natively in Rust as a client. Satellites (HA Voice Preview Edition,
+FutureProofHomes Satellite1, ESP32-S3-BOX-3) are **ESPHome** devices, so native ESPHome covers
+them; Raspberry Pi satellites use `wyoming-satellite`.
+
+STT candidates for small hardware:
+
+- **Cactus Whistle** (Cactus Compute, Apache 2.0): a 16.9 MB model, 7 languages, word timestamps,
+  run by the Cactus C++ engine via `pip install cactus-compute` (`cactus.transcribe(wav)`, 16 kHz).
+  No Wyoming server exists yet; a thin Wyoming wrapper (Python today, Rust around the C++ engine
+  later) is needed. ARM64 Linux support and accuracy are unverified.
+- **faster-whisper** via `wyoming-faster-whisper`: HA's standard local path; models from ~75 MB
+  to GB, slow on a Pi 4 beyond the smallest.
+- **Speech-to-Phrase** (Open Home Foundation): under a second on a Pi 4, but only HA's built-in commands.
+
+Plan: implement the Assist pipeline and a Wyoming client in the core; treat STT/TTS/wake-word
+engines as Wyoming sidecars.
 
 ## Rust stack
 
@@ -107,7 +145,9 @@ cases. "Compatible" means passing those diffs, not looking right.
 4. `mobile_app`: Companion apps connect.
 5. Config flows for native integrations (UI setup).
 6. Python plugin host with thin `websocket_api`/`http`/`cloud`. Measure, then load real HACS integrations.
-7. ESPHome, Matter, Shelly, Hue, Z-Wave JS native.
+7. ESPHome, Shelly, Hue native; Matter and Z-Wave JS as WebSocket clients of their servers, then
+   Matter natively via `rs-matter`.
+8. Assist pipeline + Wyoming client (STT/TTS/wake-word sidecars; ESPHome voice satellites).
 
 ## Measurement rules
 
