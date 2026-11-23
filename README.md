@@ -46,6 +46,7 @@ See [docs/architecture.md](docs/architecture.md).
 | [docs/architecture.md](docs/architecture.md) | Design, stack choices, roadmap |
 | [docs/benchmarks.md](docs/benchmarks.md) | Methodology and results |
 | [docs/landscape.md](docs/landscape.md) | Related projects (Moli OS, homeassistant-rs, HOMECORE) |
+| [docs/frontend-rendering.md](docs/frontend-rendering.md) | Would Rust/WASM speed up heavy browser views? (G-code preview measurement) |
 | [bench/](bench/) | Reproducible benchmark harness, HA patches, raw results |
 
 ## License
