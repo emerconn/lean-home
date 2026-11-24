@@ -106,6 +106,20 @@ impl States {
         }));
     }
 
+    pub fn remove(&self, entity_id: &str) {
+        let mut map = self.map.lock().unwrap();
+        if let Some(old) = map.shift_remove(entity_id) {
+            let change = Change {
+                entity_id: old.entity_id.clone(),
+                old: Some(old),
+                new: None,
+                time_fired: Utc::now(),
+                context: Context::new(None),
+            };
+            let _ = self.bus.send(Arc::new(change));
+        }
+    }
+
     pub fn get(&self, entity_id: &str) -> Option<Arc<State>> {
         self.map.lock().unwrap().get(entity_id).cloned()
     }

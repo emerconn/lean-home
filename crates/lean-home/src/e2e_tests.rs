@@ -63,7 +63,7 @@ async fn http(
 #[tokio::test]
 async fn login_then_websocket() {
     let dir = fixture_dir();
-    let app = Arc::new(crate::App::load(&dir.join("config"), &dir.join("frontend")).unwrap());
+    let app = Arc::new(crate::App::load(&dir.join("config"), &dir.join("frontend"), true).unwrap());
     let router = crate::http::router(app, &dir.join("frontend"));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
