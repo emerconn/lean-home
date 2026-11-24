@@ -9,13 +9,13 @@ const [url, out] = process.argv.slice(2);
 const norm = (s) => normFor(s, url);
 // Run after the dashboard loads, 3 s apart: {"call": [domain, service, data]} goes through the
 // frontend's own connection, {"sh": "cmd"} runs on the host (e.g. a device going offline).
-const steps = JSON.parse(process.env.STEPS ?? '[{"call": ["light", "toggle", {"entity_id": "light.kitchen"}]}]');
+const steps = JSON.parse(process.env.STEPS ||'[{"call": ["light", "toggle", {"entity_id": "light.kitchen"}]}]');
 // The frontend posts /auth/token as multipart; keep only the fields.
 const form = (s) => Object.fromEntries([...s.matchAll(/name="([^"]+)"\r\n\r\n([^\r]*)/g)].map((m) => [m[1], m[2]]));
 const parse = (s) => { try { return JSON.parse(norm(s)); } catch { return norm(s); } };
 
 const http = [], ws = [];
-const browser = await puppeteer.launch({ executablePath: "/usr/bin/chromium", args: ["--no-sandbox"] });
+const browser = await puppeteer.launch({ executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium", args: ["--no-sandbox"] });
 const page = await browser.newPage();
 await page.setViewport({ width: 1280, height: 900 });
 

@@ -1,0 +1,39 @@
+name: Compat
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Replay the recorded HA sessions (compat/fixtures) against lean-home and diff the results.
+  replay:
+    runs-on: ubuntu-latest
+    env:
+      FRONTEND: ${{ github.workspace }}/bench/.work/venv/lib/python3/site-packages/hass_frontend
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # rustup reads rust-toolchain.toml on first cargo call, no setup action needed
+      - uses: Swatinem/rust-cache@v2.9.3
+      - name: Frontend and browser driver
+        run: |
+          python3 -m venv bench/.work/venv
+          bench/.work/venv/bin/pip install -q home-assistant-frontend==20261028.6
+          # a stable path for FRONTEND, whatever the runner's Python minor version
+          ln -s "$(echo bench/.work/venv/lib/python3.*)" bench/.work/venv/lib/python3
+          npm --prefix bench/.work/node i -s puppeteer-core
+          echo "CHROMIUM=$(command -v google-chrome)" >> "$GITHUB_ENV"
+      - run: compat/replay.sh frontend-load
+      - run: compat/compare.py frontend-load compat/fixtures/frontend-load bench/.work/replay/frontend-load
+      - run: compat/replay.sh mqtt-discovery
+      - run: compat/compare.py mqtt-discovery compat/fixtures/mqtt-discovery bench/.work/replay/mqtt-discovery
