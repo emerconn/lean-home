@@ -26,3 +26,17 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked
       - run: cargo test --workspace --locked
+      - run: cargo build --release --locked
+      # Size is a project goal (README): report it on every run so changes show up per PR.
+      - name: Binary size
+        run: |
+          bin=target/release/lean-home
+          strip -o lean-home.stripped "$bin"
+          size() { awk -v b="$(stat -c %s "$1")" 'BEGIN { printf "%.2f MB (%d bytes)", b / 1e6, b }'; }
+          {
+            echo "### Binary size (x86_64, release)"
+            echo "| | Size |"
+            echo "|---|---|"
+            echo "| \`lean-home\` | $(size "$bin") |"
+            echo "| stripped | $(size lean-home.stripped) |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
