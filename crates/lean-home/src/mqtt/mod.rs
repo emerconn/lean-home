@@ -3,6 +3,7 @@
 
 mod abbreviations;
 pub mod entity;
+mod tls;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -18,7 +19,6 @@ use entity::{Entity, Publish};
 
 const COMPONENTS: [&str; 4] = ["binary_sensor", "light", "sensor", "switch"];
 
-#[derive(Debug)]
 pub struct Settings {
     broker: String,
     port: u16,
@@ -30,6 +30,7 @@ pub struct Settings {
     prefix: String,
     birth: Option<Msg>,
     will: Option<Msg>,
+    tls: Option<Arc<rustls::ClientConfig>>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,11 +67,26 @@ pub fn settings(config_dir: &Path) -> Result<Option<Settings>, String> {
         .get("transport")
         .and_then(Value::as_str)
         .is_some_and(|t| t != "tcp")
-        || conf.contains_key("certificate")
     {
-        // shortcut: plain TCP only; TLS and websockets come with rumqttc's features when needed.
-        return Err("mqtt: only plain TCP brokers are supported yet (no TLS/websockets)".into());
+        // shortcut: no websocket transport (rare; see docs/architecture.md, "Deferred").
+        return Err("mqtt: the websockets transport is not supported yet; use tcp".into());
     }
+    // As in HA, TLS is on exactly when a CA is configured.
+    let tls = match s("certificate") {
+        Some(certificate) => {
+            let t = tls::Tls {
+                certificate,
+                client_cert: s("client_cert"),
+                client_key: s("client_key"),
+                insecure: conf
+                    .get("tls_insecure")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            };
+            Some(Arc::new(t.client_config()?))
+        }
+        None => None,
+    };
     // HA's defaults for absent birth/will; an empty dict disables them.
     let msg = |k: &str, payload: &str| -> Option<Msg> {
         match conf.get(k) {
@@ -107,6 +123,7 @@ pub fn settings(config_dir: &Path) -> Result<Option<Settings>, String> {
         prefix: s("discovery_prefix").unwrap_or_else(|| "homeassistant".into()),
         birth: msg("birth_message", "online"),
         will: msg("will_message", "offline"),
+        tls,
     }))
 }
 
@@ -145,6 +162,11 @@ impl Mqtt {
                 w.payload.clone(),
                 qos(w.qos),
                 w.retain,
+            ));
+        }
+        if let Some(tls) = &settings.tls {
+            opts.set_transport(rumqttc::Transport::tls_with_config(
+                rumqttc::TlsConfiguration::Rustls(tls.clone()),
             ));
         }
         // shortcut: MQTT 3.1.1 (HA defaults new entries to 5); every broker HA supports speaks it.
@@ -203,7 +225,7 @@ impl Mqtt {
         );
         if self.settings.discovery {
             let p = &self.settings.prefix;
-            for c in COMPONENTS {
+            for c in COMPONENTS.iter().chain(&["device"]) {
                 self.subscribe(&format!("{p}/{c}/+/config"), 0);
                 self.subscribe(&format!("{p}/{c}/+/+/config"), 0);
             }
@@ -240,8 +262,12 @@ impl Mqtt {
 
     fn on_message(&self, app: &App, topic: &str, payload: &str) {
         if let Some(rest) = topic.strip_prefix(&format!("{}/", self.settings.prefix))
-            && let Some((component, id)) = parse_discovery_topic(rest)
+            && let Some((component, node, object)) = parse_discovery_topic(rest)
         {
+            if component == "device" {
+                return self.discover_device(app, node, object, payload);
+            }
+            let id = node.map_or_else(|| object.to_string(), |n| format!("{n} {object}"));
             return self.discover(app, component, &id, payload);
         }
         let mut entities = self.entities.lock().unwrap();
@@ -252,22 +278,69 @@ impl Mqtt {
         }
     }
 
+    /// Component-based discovery: one entity per message; an empty payload removes it.
     fn discover(&self, app: &App, component: &str, id: &str, payload: &str) {
-        let key = (component.to_string(), id.to_string());
+        let cfg = match serde_json::from_str::<Value>(payload) {
+            _ if payload.is_empty() => None,
+            Ok(Value::Object(mut cfg)) => {
+                expand_abbreviations(&mut cfg);
+                apply_topic_base(&mut cfg);
+                Some(cfg)
+            }
+            _ => return eprintln!("mqtt: invalid discovery payload on {component}/{id}"),
+        };
+        self.upsert(
+            app,
+            &mut self.entities.lock().unwrap(),
+            component,
+            id,
+            cfg,
+            None,
+        );
+    }
+
+    /// Device-based discovery (HA 2024.11+): one message for all of a device's components, under
+    /// `components`, sharing `device`, `origin` and HA's SHARED_OPTIONS. A component with only
+    /// `platform` is removed; an empty payload removes all of the device's components.
+    fn discover_device(&self, app: &App, node: Option<&str>, object: &str, payload: &str) {
+        let device_key = node.map_or_else(|| object.to_string(), |n| format!("{n} {object}"));
         let mut entities = self.entities.lock().unwrap();
-        // An empty payload removes the entity.
         if payload.is_empty() {
+            let ours: Vec<_> = entities
+                .iter()
+                .filter(|(_, e)| e.device_discovery.as_deref() == Some(&device_key))
+                .map(|(k, _)| k.clone())
+                .collect();
+            for (component, id) in ours {
+                self.upsert(app, &mut entities, &component, &id, None, None);
+            }
+            return;
+        }
+        let components = match device_components(node, object, payload) {
+            Ok(c) => c,
+            Err(e) => return eprintln!("mqtt: device/{device_key}: {e}"),
+        };
+        for (platform, id, cfg) in components {
+            self.upsert(app, &mut entities, &platform, &id, cfg, Some(&device_key));
+        }
+    }
+
+    /// Add, update (`Some`) or remove (`None`) one discovered entity.
+    fn upsert(
+        &self,
+        app: &App,
+        entities: &mut IndexMap<(String, String), Entity>,
+        component: &str,
+        id: &str,
+        cfg: Option<Map<String, Value>>,
+        device_discovery: Option<&str>,
+    ) {
+        let key = (component.to_string(), id.to_string());
+        let Some(cfg) = cfg else {
             if let Some(e) = entities.shift_remove(&key) {
                 app.states.remove(&e.entity_id);
             }
             return;
-        }
-        let cfg = match serde_json::from_str::<Value>(payload) {
-            Ok(Value::Object(mut cfg)) => {
-                expand(&mut cfg);
-                cfg
-            }
-            _ => return eprintln!("mqtt: invalid discovery payload on {component}/{id}"),
         };
         let mut entity = match Entity::new(component, cfg) {
             Ok(e) => e,
@@ -309,6 +382,7 @@ impl Mqtt {
         if let Some(f) = friendly {
             entity.cfg.insert("friendly_name".into(), f.into());
         }
+        entity.device_discovery = device_discovery.map(String::from);
         for t in entity.topics() {
             self.subscribe(&t, entity_qos(&entity));
         }
@@ -392,19 +466,19 @@ pub fn slugify(s: &str) -> String {
     }
 }
 
-/// `<component>/[<node_id>/]<object_id>/config` -> (component, discovery id), as HA's TOPIC_MATCHER.
-fn parse_discovery_topic(rest: &str) -> Option<(&str, String)> {
+/// `<component>/[<node_id>/]<object_id>/config` -> (component, node_id, object_id), as HA's
+/// TOPIC_MATCHER. `component` is a supported platform or `device` (device-based discovery).
+fn parse_discovery_topic(rest: &str) -> Option<(&str, Option<&str>, &str)> {
     let parts: Vec<_> = rest.split('/').collect();
     let ok = |s: &str| {
         !s.is_empty()
             && s.bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     };
+    let known = |c: &str| COMPONENTS.contains(&c) || c == "device";
     match parts.as_slice() {
-        [c, obj, "config"] if COMPONENTS.contains(c) && ok(obj) => Some((c, obj.to_string())),
-        [c, node, obj, "config"] if COMPONENTS.contains(c) && ok(node) && ok(obj) => {
-            Some((c, format!("{node} {obj}")))
-        }
+        [c, obj, "config"] if known(c) && ok(obj) => Some((c, None, obj)),
+        [c, node, obj, "config"] if known(c) && ok(node) && ok(obj) => Some((c, Some(node), obj)),
         _ => None,
     }
 }
@@ -433,8 +507,79 @@ fn expand_with(m: &mut Map<String, Value>, table: &[(&str, &str)]) {
     }
 }
 
-/// HA's `_replace_all_abbreviations` + `_replace_topic_base` for a component payload.
-fn expand(cfg: &mut Map<String, Value>) {
+/// Split a device-based discovery payload into (platform, discovery id, config) per component;
+/// `None` config = remove that component.
+type Component = (String, String, Option<Map<String, Value>>);
+fn device_components(
+    node: Option<&str>,
+    object: &str,
+    payload: &str,
+) -> Result<Vec<Component>, String> {
+    let Ok(Value::Object(mut dev)) = serde_json::from_str::<Value>(payload) else {
+        return Err("invalid JSON".into());
+    };
+    expand_abbreviations(&mut dev);
+    if dev.contains_key("child_devices") {
+        // shortcut: child devices (HA 2026.x) are skipped; add when a firmware sends them.
+        eprintln!("mqtt: device/{object}: child_devices not supported yet, ignoring them");
+    }
+    let Some(Value::Object(components)) = dev.get("components") else {
+        return Err("no components".into());
+    };
+    let mut out = vec![];
+    for (component_id, comp) in components {
+        let Value::Object(cfg) = comp else { continue };
+        let mut cfg = cfg.clone();
+        expand_abbreviations(&mut cfg);
+        let Some(platform) = cfg
+            .shift_remove("platform")
+            .and_then(|p| p.as_str().map(String::from))
+        else {
+            eprintln!("mqtt: device/{object}/{component_id}: no platform");
+            continue;
+        };
+        // HA: the device's object id is its components' node id, the component id their object id.
+        let id = match node {
+            Some(n) => format!("{object} {n} {component_id}"),
+            None => format!("{object} {component_id}"),
+        };
+        let cfg = (!cfg.is_empty()).then(|| {
+            for k in ["device", "origin"] {
+                if let Some(v) = dev.get(k) {
+                    cfg.insert(k.into(), v.clone());
+                }
+            }
+            for k in SHARED_OPTIONS {
+                if let (Some(v), false) = (dev.get(*k), cfg.contains_key(*k)) {
+                    cfg.insert(k.to_string(), v.clone());
+                }
+            }
+            apply_topic_base(&mut cfg);
+            cfg
+        });
+        out.push((platform, id, cfg));
+    }
+    Ok(out)
+}
+
+/// Options a device-based discovery payload passes down to components that don't set them
+/// (HA's `SHARED_OPTIONS`).
+const SHARED_OPTIONS: &[&str] = &[
+    "availability",
+    "availability_mode",
+    "availability_template",
+    "availability_topic",
+    "command_topic",
+    "encoding",
+    "message_expiry_interval",
+    "payload_available",
+    "payload_not_available",
+    "state_topic",
+    "qos",
+];
+
+/// HA's `_replace_all_abbreviations`.
+fn expand_abbreviations(cfg: &mut Map<String, Value>) {
     expand_with(cfg, abbreviations::ABBREVIATIONS);
     for a in cfg
         .get_mut("availability")
@@ -452,6 +597,10 @@ fn expand(cfg: &mut Map<String, Value>) {
     if let Some(d) = cfg.get_mut("device").and_then(Value::as_object_mut) {
         expand_with(d, abbreviations::DEVICE_ABBREVIATIONS);
     }
+}
+
+/// HA's `_replace_topic_base`: `~` at either end of a topic is the `~` option's value.
+fn apply_topic_base(cfg: &mut Map<String, Value>) {
     let Some(Value::String(base)) = cfg.shift_remove("~") else {
         return;
     };
@@ -494,7 +643,8 @@ mod tests {
         .as_object()
         .unwrap()
         .clone();
-        expand(&mut cfg);
+        expand_abbreviations(&mut cfg);
+        apply_topic_base(&mut cfg);
         assert_eq!(
             Value::Object(cfg),
             json!({"state_topic": "z2m/lamp/state", "command_topic": "z2m/lamp/set", "availability": [{"topic": "z2m/lamp/avail"}],
@@ -509,17 +659,63 @@ mod tests {
     }
 
     #[test]
+    fn device_discovery() {
+        let payload = json!({
+            "dev": {"ids": ["plug1"], "name": "Plug"}, "o": {"name": "fw"},
+            "stat_t": "plug1/state", "avty_t": "plug1/avail", "qos": 1,
+            "cmps": {
+                "relay": {"p": "switch", "uniq_id": "plug1_relay", "cmd_t": "plug1/set"},
+                "power": {"p": "sensor", "uniq_id": "plug1_power", "stat_t": "plug1/power", "~": "x"},
+                "gone": {"p": "light"}
+            }
+        });
+        let c = device_components(None, "plug1", &payload.to_string()).unwrap();
+        let (platform, id, relay) = &c[0];
+        let relay = relay.as_ref().unwrap();
+        assert_eq!((platform.as_str(), id.as_str()), ("switch", "plug1 relay"));
+        // Shared options pass down; device and origin are attached with their keys expanded.
+        assert_eq!(relay["state_topic"], "plug1/state");
+        assert_eq!(relay["availability_topic"], "plug1/avail");
+        assert_eq!(relay["qos"], 1);
+        assert_eq!(
+            relay["device"],
+            json!({"identifiers": ["plug1"], "name": "Plug"})
+        );
+        // A component's own option wins over the shared one.
+        assert_eq!(c[1].2.as_ref().unwrap()["state_topic"], "plug1/power");
+        // Only `platform` left = removal.
+        assert_eq!(
+            (c[2].0.as_str(), c[2].1.as_str(), c[2].2.is_none()),
+            ("light", "plug1 gone", true)
+        );
+        assert_eq!(
+            device_components(
+                Some("n"),
+                "d",
+                r#"{"cmps":{"a":{"p":"switch","cmd_t":"t"}}}"#
+            )
+            .unwrap()[0]
+                .1,
+            "d n a"
+        );
+    }
+
+    #[test]
     fn topics() {
         assert_eq!(
             parse_discovery_topic("light/node-1/obj_2/config"),
-            Some(("light", "node-1 obj_2".into()))
+            Some(("light", Some("node-1"), "obj_2"))
         );
         assert_eq!(
             parse_discovery_topic("light/obj/config"),
-            Some(("light", "obj".into()))
+            Some(("light", None, "obj"))
         );
         assert_eq!(parse_discovery_topic("light/ob j/config"), None);
         assert_eq!(parse_discovery_topic("climate/x/config"), None);
+        assert_eq!(
+            parse_discovery_topic("device/plug1/config"),
+            Some(("device", None, "plug1"))
+        );
         assert!(
             topic_matches("a/+/c", "a/b/c")
                 && topic_matches("a/#", "a/b/c")

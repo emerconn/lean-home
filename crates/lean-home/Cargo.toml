@@ -15,12 +15,14 @@ getrandom = "0.4.3"
 hmac = "0.13.0"
 indexmap = "2.14.2"
 minijinja = { version = "3.1.0", features = ["serde"] }
-rumqttc = { version = "0.25.1", default-features = false }
+rumqttc = { version = "0.25.1", default-features = false, features = ["use-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 sha2 = "0.11.1"
 tokio = { version = "1.54.1", features = ["rt", "macros", "net", "signal", "sync", "time", "fs"] }
 tower-http = { version = "0.7.1", features = ["fs"] }
+webpki-roots = "1.0.12"
 
 [dev-dependencies]
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
