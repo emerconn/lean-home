@@ -41,6 +41,7 @@ esac
 "$ROOT/target/release/lean-home" --config "$OUT/config" --frontend "$FRONTEND" --listen "127.0.0.1:$PORT" "${args[@]}" > "$OUT/server.log" 2>&1 &
 LH=$!
 for _ in $(seq 50); do curl -sf "$URL/manifest.json" >/dev/null && break; sleep 0.2; done
+curl -sf "$URL/manifest.json" >/dev/null || { echo "lean-home did not start:" >&2; cat "$OUT/server.log" >&2; exit 1; }
 STEPS=${STEPS:-} NODE_PATH=$ROOT/bench/.work/node/node_modules node "$ROOT/compat/capture.mjs" "$URL" "$OUT"
 # A clean stop, so the will message HA sends on shutdown is part of what's compared.
 kill -TERM "$LH"; wait "$LH"

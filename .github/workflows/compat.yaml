@@ -30,7 +30,8 @@ jobs:
           python3 -m venv bench/.work/venv
           bench/.work/venv/bin/pip install -q home-assistant-frontend==20261028.6
           # a stable path for FRONTEND, whatever the runner's Python minor version
-          ln -s "$(echo bench/.work/venv/lib/python3.*)" bench/.work/venv/lib/python3
+          ln -s "$(basename bench/.work/venv/lib/python3.*)" bench/.work/venv/lib/python3
+          test -f "$FRONTEND/index.html"
           npm --prefix bench/.work/node i -s puppeteer-core
           echo "CHROMIUM=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - run: compat/replay.sh frontend-load
