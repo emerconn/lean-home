@@ -1,4 +1,4 @@
-// Drive the real HA frontend in headless Chromium and record HTTP (/, /auth, /api) and WebSocket
+// Drive the real HA frontend in headless Chromium and record HTTP (/, /auth, /api, /.well-known) and WebSocket
 // traffic as JSONL. Usage: node capture.mjs <ha-url> <out-dir>   (see capture.sh)
 import { createRequire } from "node:module";
 import { writeFileSync } from "node:fs";
@@ -9,6 +9,7 @@ const [url, out] = process.argv.slice(2);
 const norm = (s) =>
   s
     .replaceAll(url, "http://HA")
+    .replaceAll(encodeURIComponent(url), encodeURIComponent("http://HA"))
     .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, "<jwt>")
     .replace(/"(access_token|refresh_token|auth_code|flow_id|code_challenge|code_verifier|token)":"[^"]+"/g, '"$1":"<$1>"')
     .replace(/([?&](code|state|code_challenge)=)[^&"]+/g, "$1<$2>")
@@ -29,7 +30,7 @@ page.on("response", async (res) => {
   const req = res.request(), p = new URL(req.url());
   if (p.origin !== new URL(url).origin) return;
   const isDoc = req.resourceType() === "document";
-  if (!isDoc && !/^\/(auth|api)\//.test(p.pathname)) return;
+  if (!isDoc && !/^\/(auth|api|\.well-known)\//.test(p.pathname)) return;
   let body = null;
   try { body = isDoc ? "<html>" : parse(await res.text()); } catch {}
   if (isDoc && p.pathname + p.search === "/") writeFileSync(`${out}/index.html`, norm(await res.text()));

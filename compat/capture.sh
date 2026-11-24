@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Record one real HA frontend load (login → dashboard → toggle a light) into compat/fixtures/.
-# Needs docker, node and /usr/bin/chromium. Temp files go to bench/.work/ (gitignored).
+# Needs docker, curl, jq, node and /usr/bin/chromium. Temp files go to bench/.work/ (gitignored).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd); WORK=$ROOT/bench/.work/capture
 IMG=ghcr.io/home-assistant/home-assistant:${HA_VER:-2026.11.2}; PORT=${PORT:-18123}; URL=http://127.0.0.1:$PORT
@@ -30,7 +30,8 @@ EOF
 
 docker run -d --name lh-capture -p "127.0.0.1:$PORT:8123" -e TZ=UTC -v "$WORK/config:/config" "$IMG" >/dev/null
 trap 'docker rm -f lh-capture >/dev/null' EXIT
-until curl -sf "$URL/api/onboarding" >/dev/null; do sleep 1; done
+for i in $(seq 180); do curl -sf "$URL/api/onboarding" >/dev/null && break; sleep 1; done
+curl -sf "$URL/api/onboarding" >/dev/null || { echo "HA did not start; docker logs lh-capture" >&2; exit 1; }
 
 # Onboarding over REST, as the onboarding UI does it; the browser then logs in normally.
 CID=$URL/
