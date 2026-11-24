@@ -172,6 +172,27 @@ to the CI replay.
 
 Measure memory and binary size before and after, as for steps 0 and 1.
 
+### When it should run on the router: a container image
+
+Not a roadmap step: do it whenever lean-home should run on real hardware.
+
+1. **Static build:** musl, aarch64 (and x86_64), in a `FROM scratch` image, built in CI.
+2. **Trimmed frontend.** The `home-assistant-frontend` package is 283 MB; the image needs far less
+   (estimate: 20–30 MB, measure it):
+
+   | Part | Size | Keep? |
+   |---|---|---|
+   | `frontend_latest` | 78 MB | One compressed copy of each file instead of three; drop the 28 MB of `.map` debug files |
+   | `frontend_es5` (old browsers) | 85 MB | Probably not; old wall tablets and Android WebViews may need it, so make it opt-in |
+   | `static/translations` | 87 MB | Brotli copies only: 9.4 MB for all languages, 0.25 MB for English |
+   | `static/locale-data` | 24 MB | Likely cut down per language too |
+
+   Check before dropping gzip: Chromium is believed to accept brotli only over HTTPS, and most
+   people open the hub over plain HTTP on the LAN, so the gzip copies (~8 MB) may have to stay.
+   Test it rather than guess.
+3. **Measure on the target** (1 GB ARM64): memory, idle CPU, startup time and image size, under
+   the [measurement rules](#measurement-rules). Until now everything was measured on the dev PC.
+
 ### Deferred, and when to do it
 
 Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the code it affects.
