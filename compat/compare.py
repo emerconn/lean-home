@@ -20,11 +20,17 @@ ALLOWED_ERRORS = {
     ("lovelace/config", "config_not_found"),  # HA answers the same: no dashboard saved yet
 }
 
-# Entities of lean-home's --demo that aren't what the recording had (frontend-load only).
-DEMO_ONLY = {
-    "switch.fan": "not in the recording",
-    "sensor.temperature": "the demo's sensor has state_class, HA's template sensor in the recording doesn't",
-}
+
+def expected_entities(scenario, recv):
+    """The entities lean-home must provide, taken from the recording, so a missing one fails."""
+    if scenario == "frontend-load":
+        # The entity the recording toggles, which --demo provides. The demo's other entities aren't
+        # HA's: switch.fan isn't in the recording, and HA's template sensor.temperature has no
+        # state_class while the demo's has.
+        return {"light.kitchen"}
+    # Every MQTT entity HA created from the recorded discovery messages.
+    return {e["ei"] for e in (first_result(recv, "config/entity_registry/list_for_display") or {}).get("entities", []) if e["pl"] == "mqtt"}
+
 
 problems = []
 compared = {}  # what was checked, for the summary line
@@ -85,11 +91,11 @@ def compare_ws(scenario, rec_dir, rep_dir):
     rep_sent, rep = ws_messages(rep_dir / "ws.jsonl")
     snapshot = lambda recv: next(m["event"]["a"] for t, m in recv if t == "subscribe_entities" and m["type"] == "event" and "a" in m["event"])
     ha_snap, lh_snap = snapshot(rec), snapshot(rep)
-    entities = set(lh_snap)
-    if scenario == "frontend-load":
-        entities -= set(DEMO_ONLY)
-    check(entities, "lean-home's initial subscribe_entities snapshot has no entities to compare")
-    for eid in sorted(entities):
+    entities = expected_entities(scenario, rec)
+    check(entities, "the recording has no entities to compare")
+    missing = sorted(entities - set(lh_snap))
+    check(not missing, f"the recording has entities lean-home didn't create: {', '.join(missing)}")
+    for eid in sorted(entities & set(lh_snap)):
         check(ha_snap.get(eid) == lh_snap[eid], f"initial state of {eid} differs", ha_snap.get(eid), lh_snap[eid])
 
     ha_changes, lh_changes = entity_changes(rec, entities), entity_changes(rep, entities)
