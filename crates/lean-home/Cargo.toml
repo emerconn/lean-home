@@ -5,3 +5,23 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+
+[dependencies]
+axum = { version = "0.8.9", features = ["multipart", "ws"] }
+base64 = "0.23.1"
+bcrypt = "0.19.3"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+getrandom = "0.4.3"
+hmac = "0.13.0"
+indexmap = "2.14.2"
+minijinja = { version = "3.1.0", features = ["serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+sha2 = "0.11.1"
+tokio = { version = "1.54.1", features = ["rt", "macros", "net", "signal", "sync", "time", "fs"] }
+tower-http = { version = "0.7.1", features = ["fs"] }
+
+[dev-dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+tokio = { version = "1.54.1", features = ["io-util"] }
+tokio-tungstenite = "0.30.0"

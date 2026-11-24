@@ -17,7 +17,19 @@ Goals 1 and 2 are hard requirements. Goal 3 is optimized around them.
 
 ## Status
 
-**Research and benchmarking.** No rewrite code yet. What we know so far:
+**Roadmap step 0 (frontend loads) works.** The official HA 2026.11.2 frontend logs in against
+lean-home, renders the Overview dashboard and toggles demo entities live. Login uses the HA
+config dir's own `.storage/auth*` files, so HA accepts tokens lean-home issues and the reverse.
+Memory: 0.5 MiB anon idle, 1.4 MiB with the frontend connected; a 5.4 MB release binary
+(single run each, [measurement rules](docs/architecture.md#measurement-rules)).
+
+```sh
+# config/ must already be onboarded by HA (lean-home has no onboarding yet);
+# hass_frontend/ comes from the home-assistant-frontend 20261028.6 package.
+cargo run --release -- --config config --frontend hass_frontend --listen 0.0.0.0:8123
+```
+
+Background research, which motivates the design:
 
 | | Anon memory (cgroup) |
 |---|---|
@@ -43,7 +55,7 @@ See [docs/architecture.md](docs/architecture.md).
 
 | Path | What |
 |---|---|
-| [crates/](crates/) | Rust workspace (`lean-home` binary; empty for now) |
+| [crates/](crates/) | Rust workspace: the `lean-home` binary (HTTP/auth, WebSocket API, state machine) |
 | [docs/architecture.md](docs/architecture.md) | Design, stack choices, roadmap |
 | [docs/benchmarks.md](docs/benchmarks.md) | Methodology and results |
 | [docs/landscape.md](docs/landscape.md) | Related projects (Moli OS, homeassistant-rs, HOMECORE) |
