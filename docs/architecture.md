@@ -150,7 +150,27 @@ cases. "Compatible" means passing those diffs, not looking right.
 8. Assist pipeline + Wyoming client (STT/TTS/wake-word sidecars; ESPHome voice satellites).
 
 Steps 0 and 1 are done (MQTT covers light, switch, sensor and binary_sensor, per-component and
-device-based discovery, plain TCP and TLS).
+device-based discovery, plain TCP and TLS). CI replays the recorded HA sessions in
+`compat/fixtures/` against lean-home on every PR (`compat/replay.sh`, `compat/compare.py`).
+
+### Next: step 2 (templates, automations, scripts)
+
+Same method as steps 0 and 1: record real HA first, build against the recording, add the scenario
+to the CI replay.
+
+1. **Record.** A `compat/capture-automations.sh` scenario: a few automations and scripts in YAML
+   (state, time and MQTT triggers; conditions; service calls, delays, `choose`), the frontend's
+   automation and script pages, and template rendering (`render_template` with `states()`).
+2. **Templates.** HA's globals and filters on minijinja: `states()`, `is_state`, `state_attr`,
+   `float(0)`/`int(0)` with defaults, `iif`, `is_defined`, `now()`… Use HA's own template tests
+   as cases. This also fixes MQTT value templates that use them (see "Deferred" below) and
+   `render_template` with live listeners.
+3. **Config.** Read `configuration.yaml` with HA's tags (`!include`, `!secret`,
+   `!include_dir_*`), then `automations.yaml` and `scripts.yaml`.
+4. **Automations and scripts.** Triggers (state, time, MQTT first), conditions, actions; the
+   `automation.*`/`script.*` entities and services; the WebSocket commands the editor uses.
+
+Measure memory and binary size before and after, as for steps 0 and 1.
 
 ### Deferred, and when to do it
 
