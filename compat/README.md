@@ -30,3 +30,14 @@ device goes offline (`lh/status` → `offline`).
 
 Re-record with `compat/capture-mqtt.sh` (same requirements; temp files and the broker log go to
 `bench/.work/capture-mqtt`).
+
+## Replay and compare
+
+`compat/replay.sh <scenario>` runs the same scenario against lean-home (same login, browser steps,
+and for MQTT the same broker, devices and responder, from `mqtt-scenario.sh`) into
+`bench/.work/replay/<scenario>/`; `compat/make-config.py` builds its config dir from the fixtures.
+`compat/compare.py <scenario> compat/fixtures/<scenario> bench/.work/replay/<scenario>` then
+checks it per message against the recording and exits non-zero on any difference. Its tolerances
+(set-ordered data in HA, the demo entities, unimplemented commands) are listed in the script. CI
+runs both scenarios (`.github/workflows/compat.yaml`). Locally, set `FRONTEND` to a
+`hass_frontend` dir and `CHROMIUM` if Chromium isn't at `/usr/bin/chromium`.
