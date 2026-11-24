@@ -13,19 +13,19 @@ jobs:
     if: github.repository_owner == 'emerconn'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       # App token so the tag/release can trigger other workflows
       - id: token
-        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        uses: actions/create-github-app-token@v3.4.0
         with:
           client-id: ${{ vars.BOT_CLIENT_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: read
-      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+      - uses: release-plz/action@v0.5.148
         with:
           command: release
         env:
@@ -39,19 +39,19 @@ jobs:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       # App token so CI runs on the release PR (required checks)
       - id: token
-        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        uses: actions/create-github-app-token@v3.4.0
         with:
           client-id: ${{ vars.BOT_CLIENT_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+      - uses: release-plz/action@v0.5.148
         with:
           command: release-pr
         env:
