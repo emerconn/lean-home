@@ -1,3 +1,5 @@
 [workspace]
 # not published to crates.io: versions come from git tags
 git_only = true
+# tag/release only when the release PR is merged, not on every push to main
+release_always = false
