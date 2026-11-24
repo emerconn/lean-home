@@ -262,20 +262,22 @@ async fn flow_step(
     let (Some(username), Some(password)) = (field("username"), field("password")) else {
         return message(StatusCode::BAD_REQUEST, "User input malformed");
     };
-    // bcrypt cost 12 is ~0.25 s of CPU: keep it off the single async thread.
-    let hash = app.auth.hash_for(&username);
-    // bcrypt truncates at 72 bytes, as HA does explicitly.
-    let pw = password.as_bytes()[..password.len().min(72)].to_vec();
-    let ok = tokio::task::spawn_blocking(move || bcrypt::verify(pw, &hash).unwrap_or(false))
-        .await
-        .unwrap_or(false);
-    match app.auth.finish_flow(
-        &flow_id,
-        addr.ip().to_canonical(),
-        &client_id,
-        &username,
-        ok,
-    ) {
+    let ip = addr.ip().to_canonical();
+    let guard = &app.auth.guard;
+    tokio::time::sleep(guard.delay(ip)).await;
+    let ok = guard.verify(&password, app.auth.hash_for(&username)).await;
+    let step = app
+        .auth
+        .finish_flow(&flow_id, ip, &client_id, &username, ok);
+    let failed = matches!(step, Step::InvalidAuth);
+    if failed || matches!(step, Step::Done(_)) {
+        guard.record(ip, !failed);
+    }
+    if failed {
+        // HA logs this too (http/ban.py); usernames are left out of the log on purpose.
+        eprintln!("Login attempt with invalid authentication from {ip}");
+    }
+    match step {
         Step::NotFound => message(StatusCode::NOT_FOUND, "Invalid flow specified"),
         Step::IpChanged => message(StatusCode::BAD_REQUEST, "IP address changed"),
         Step::BadRedirect => message(StatusCode::FORBIDDEN, "Invalid redirect URI"),

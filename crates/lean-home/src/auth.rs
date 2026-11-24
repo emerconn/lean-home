@@ -21,7 +21,80 @@ const CODE_TTL: Duration = Duration::from_secs(600);
 // Any valid bcrypt hash: checked against for unknown users so timing doesn't reveal which exist.
 const DUMMY_HASH: &str = "$2b$12$CiuFGszHx9eNHxPuQcwBWez4CwDTOcLTX5CbOpV6gef2nYuXkY7BO";
 
+/// Throttles password checks. Stock HA has no limit by default (`login_attempts_threshold: -1`)
+/// and relies on bcrypt's cost; on one small CPU that cost is itself the risk, so checks run
+/// one at a time, and an IP that keeps failing waits longer before each check. Responses are
+/// unchanged, only slower.
+// shortcut: no IP ban (HA's opt-in `http: login_attempts_threshold`); add with configuration.yaml.
+pub struct LoginGuard {
+    /// One bcrypt check at a time: parallel attempts queue instead of each taking a core.
+    check: tokio::sync::Semaphore,
+    /// ip -> (failures in the current window, window start)
+    failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+}
+
+const FAILURE_WINDOW: Duration = Duration::from_secs(15 * 60);
+const FREE_FAILURES: u32 = 5;
+const MAX_DELAY: Duration = Duration::from_secs(30);
+/// Bounds memory if an attacker rotates addresses; backoff then restarts, the queue still holds.
+const MAX_TRACKED: usize = 4096;
+
+impl Default for LoginGuard {
+    fn default() -> Self {
+        Self {
+            check: tokio::sync::Semaphore::new(1),
+            failures: Mutex::default(),
+        }
+    }
+}
+
+impl LoginGuard {
+    /// How long `ip` waits before its next check: nothing for the first few failures, then
+    /// 1 s doubling up to 30 s.
+    pub fn delay(&self, ip: IpAddr) -> Duration {
+        let failures = self.failures.lock().unwrap();
+        match failures.get(&ip) {
+            Some((n, start)) if *n >= FREE_FAILURES && start.elapsed() < FAILURE_WINDOW => {
+                Duration::from_secs(1 << (n - FREE_FAILURES).min(5)).min(MAX_DELAY)
+            }
+            _ => Duration::ZERO,
+        }
+    }
+
+    pub fn record(&self, ip: IpAddr, ok: bool) {
+        let mut failures = self.failures.lock().unwrap();
+        if ok {
+            failures.remove(&ip);
+            return;
+        }
+        if failures.len() >= MAX_TRACKED {
+            failures.retain(|_, (_, start)| start.elapsed() < FAILURE_WINDOW);
+            if failures.len() >= MAX_TRACKED {
+                failures.clear();
+            }
+        }
+        let e = failures.entry(ip).or_insert((0, Instant::now()));
+        if e.1.elapsed() >= FAILURE_WINDOW {
+            *e = (0, Instant::now());
+        }
+        e.0 += 1;
+    }
+
+    /// Check `password` against a bcrypt `hash`, one check at a time, off the async thread.
+    pub async fn verify(&self, password: &str, hash: String) -> bool {
+        let Ok(_permit) = self.check.acquire().await else {
+            return false;
+        };
+        // bcrypt truncates at 72 bytes, as HA does explicitly.
+        let pw = password.as_bytes()[..password.len().min(72)].to_vec();
+        tokio::task::spawn_blocking(move || bcrypt::verify(pw, &hash).unwrap_or(false))
+            .await
+            .unwrap_or(false)
+    }
+}
+
 pub struct Auth {
+    pub guard: LoginGuard,
     path: PathBuf,
     store: Mutex<Value>,
     /// normalized username -> bcrypt hash
@@ -90,6 +163,7 @@ impl Auth {
             );
         }
         Ok(Self {
+            guard: LoginGuard::default(),
             path: storage.join("auth"),
             store: Mutex::new(read("auth")?),
             hashes,
@@ -443,6 +517,27 @@ fn write_private(path: &Path, value: &Value) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_backoff() {
+        let g = LoginGuard::default();
+        let ip: IpAddr = "192.0.2.1".parse().unwrap();
+        for _ in 0..FREE_FAILURES {
+            assert_eq!(g.delay(ip), Duration::ZERO);
+            g.record(ip, false);
+        }
+        assert_eq!(g.delay(ip), Duration::from_secs(1));
+        g.record(ip, false);
+        assert_eq!(g.delay(ip), Duration::from_secs(2));
+        for _ in 0..20 {
+            g.record(ip, false);
+        }
+        assert_eq!(g.delay(ip), MAX_DELAY);
+        // Other addresses are unaffected; a success clears the record.
+        assert_eq!(g.delay("192.0.2.2".parse().unwrap()), Duration::ZERO);
+        g.record(ip, true);
+        assert_eq!(g.delay(ip), Duration::ZERO);
+    }
 
     #[test]
     fn redirect_rules() {
