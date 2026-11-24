@@ -43,11 +43,20 @@ See [docs/architecture.md](docs/architecture.md).
 
 | Path | What |
 |---|---|
+| [crates/](crates/) | Rust workspace (`lean-home` binary; empty for now) |
 | [docs/architecture.md](docs/architecture.md) | Design, stack choices, roadmap |
 | [docs/benchmarks.md](docs/benchmarks.md) | Methodology and results |
 | [docs/landscape.md](docs/landscape.md) | Related projects (Moli OS, homeassistant-rs, HOMECORE) |
 | [docs/frontend-rendering.md](docs/frontend-rendering.md) | Would Rust/WASM speed up heavy browser views? (G-code preview measurement) |
 | [bench/](bench/) | Reproducible benchmark harness, HA patches, raw results |
+| [.github/](.github/) | CI, PR title check, Renovate, release-plz |
+
+## Contributing
+
+All changes land on `main` through a squash-merged PR. The PR title becomes the commit, so it must
+follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat: …`, `fix: …`, `docs: …`);
+[release-plz](https://release-plz.dev/) uses those titles for the version bump and changelog. CI runs
+`cargo fmt --check`, `cargo clippy -D warnings` and `cargo test`.
 
 ## License
 
