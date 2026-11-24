@@ -160,6 +160,7 @@ Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the
 |---|---|---|
 | Templates have no HA helpers (`states()`, `float(0)`, `is_defined`…), so MQTT value templates using them fail and the message is dropped | Step 2 | One template engine serves automations, scripts and MQTT; build it once there |
 | Registries are read-only: new MQTT entities aren't written to `core.entity_registry` (HA later picks the same ids, normally) | Step 5 | Needed once lean-home renames entities or assigns areas itself, i.e. with config flows; writing HA's file needs care not to corrupt it |
+| HA's opt-in IP ban (`http: login_attempts_threshold`, `ip_bans.yaml`) | With `configuration.yaml` parsing | Off by default in HA too; lean-home already serializes password checks and backs off per IP |
 | MQTT websocket transport | When a user needs it | Rare; brokers behind a reverse proxy |
 | MQTT template-schema lights (`schema: template`) | When a device needs it | Rare compared to the default and JSON schemas |
 | MQTT device discovery `child_devices` (HA 2026.x) | When a firmware sends it | New; nothing we know of uses it yet |
