@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "minor_version": 4,
+  "key": "core.device_registry",
+  "data": {
+    "devices": [
+      {"area_id":null,"config_entry_id":"<ulid>","config_subentry_id":null,"configuration_url":null,"connections":[],"created_at":"<ts>","disabled_by":null,"entry_type":"service","hw_version":null,"id":"<hex32>","identifiers":[["sun","<ulid>"]],"labels":[],"composite_device_id":null,"composite_primary_config_entry":null,"split_at":null,"manufacturer":null,"model":null,"model_id":null,"modified_at":"<ts>","name_by_user":null,"name":"Sun","has_composite_identifiers":false,"primary_config_entry":"<ulid>","serial_number":null,"sw_version":null,"via_device_id":null},
+      {"area_id":null,"config_entry_id":"<ulid>","config_subentry_id":null,"configuration_url":null,"connections":[],"created_at":"<ts>","disabled_by":null,"entry_type":"service","hw_version":null,"id":"<hex32>","identifiers":[["google_translate","<ulid>"]],"labels":[],"composite_device_id":null,"composite_primary_config_entry":null,"split_at":null,"manufacturer":"Google","model":"Google Translate TTS","model_id":null,"modified_at":"<ts>","name_by_user":null,"name":"Google Translate en com","has_composite_identifiers":false,"primary_config_entry":"<ulid>","serial_number":null,"sw_version":null,"via_device_id":null},
+      {"area_id":null,"config_entry_id":"<ulid>","config_subentry_id":null,"configuration_url":"homeassistant://config/backup","connections":[],"created_at":"<ts>","disabled_by":null,"entry_type":"service","hw_version":null,"id":"<hex32>","identifiers":[["backup","backup_manager"]],"labels":[],"composite_device_id":null,"composite_primary_config_entry":null,"split_at":null,"manufacturer":"Home Assistant","model":"Home Assistant Backup","model_id":null,"modified_at":"<ts>","name_by_user":null,"name":"Backup","has_composite_identifiers":false,"primary_config_entry":"<ulid>","serial_number":null,"sw_version":"2026.11.2","via_device_id":null},
+      {"area_id":null,"config_entry_id":"<ulid>","config_subentry_id":null,"configuration_url":null,"connections":[],"created_at":"<ts>","disabled_by":null,"entry_type":null,"hw_version":null,"id":"<hex32>","identifiers":[["mqtt","lh_demo"]],"labels":[],"composite_device_id":null,"composite_primary_config_entry":null,"split_at":null,"manufacturer":"lean-home","model":null,"model_id":null,"modified_at":"<ts>","name_by_user":null,"name":"Demo Device","has_composite_identifiers":false,"primary_config_entry":"<ulid>","serial_number":null,"sw_version":null,"via_device_id":null}
+    ],
+    "child_devices": [],
+    "deleted_devices": []
+  }
+}

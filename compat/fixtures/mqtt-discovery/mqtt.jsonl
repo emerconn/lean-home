@@ -1,0 +1,27 @@
+{"topic":"homeassistant/light/lh_demo/light1/config","payload":"{\"name\":\"Ceiling\",\"unique_id\":\"lh_light1\",\"state_topic\":\"lh/light1/state\",\"command_topic\":\"lh/light1/set\",\"brightness_state_topic\":\"lh/light1/brightness\",\"brightness_command_topic\":\"lh/light1/brightness/set\",\"availability_topic\":\"lh/status\",\"device\":{\"identifiers\":[\"lh_demo\"],\"name\":\"Demo Device\",\"manufacturer\":\"lean-home\"}}","retain":true,"qos":0}
+{"topic":"homeassistant/light/lh_demo/light2/config","payload":"{\"~\":\"lh/light2\",\"name\":\"Desk\",\"uniq_id\":\"lh_light2\",\"schema\":\"json\",\"stat_t\":\"~/state\",\"cmd_t\":\"~/set\",\"brightness\":true,\"sup_clrm\":[\"brightness\"],\"avty_t\":\"lh/status\",\"dev\":{\"ids\":[\"lh_demo\"],\"name\":\"Demo Device\",\"mf\":\"lean-home\"}}","retain":true,"qos":0}
+{"topic":"homeassistant/switch/lh_demo/switch1/config","payload":"{\"name\":\"Fan\",\"unique_id\":\"lh_switch1\",\"state_topic\":\"lh/switch1/state\",\"command_topic\":\"lh/switch1/set\",\"availability_topic\":\"lh/status\",\"device\":{\"identifiers\":[\"lh_demo\"],\"name\":\"Demo Device\",\"manufacturer\":\"lean-home\"}}","retain":true,"qos":0}
+{"topic":"homeassistant/sensor/lh_demo/temp/config","payload":"{\"name\":\"Temperature\",\"unique_id\":\"lh_temp\",\"state_topic\":\"lh/sensor1/state\",\"value_template\":\"{{ value_json.temperature }}\",\"device_class\":\"temperature\",\"unit_of_measurement\":\"°C\",\"state_class\":\"measurement\",\"availability_topic\":\"lh/status\",\"device\":{\"identifiers\":[\"lh_demo\"],\"name\":\"Demo Device\",\"manufacturer\":\"lean-home\"}}","retain":true,"qos":0}
+{"topic":"homeassistant/binary_sensor/lh_demo/door/config","payload":"{\"name\":\"Front door\",\"unique_id\":\"lh_door\",\"state_topic\":\"lh/door/state\",\"device_class\":\"door\",\"payload_on\":\"ON\",\"payload_off\":\"OFF\",\"availability_topic\":\"lh/status\",\"device\":{\"identifiers\":[\"lh_demo\"],\"name\":\"Demo Device\",\"manufacturer\":\"lean-home\"}}","retain":true,"qos":0}
+{"topic":"lh/status","payload":"online","retain":true,"qos":0}
+{"topic":"lh/light1/state","payload":"OFF","retain":true,"qos":0}
+{"topic":"lh/light1/brightness","payload":"255","retain":true,"qos":0}
+{"topic":"lh/light2/state","payload":"{\"state\":\"OFF\"}","retain":true,"qos":0}
+{"topic":"lh/switch1/state","payload":"OFF","retain":true,"qos":0}
+{"topic":"lh/sensor1/state","payload":"{\"temperature\":21.5}","retain":true,"qos":0}
+{"topic":"lh/door/state","payload":"OFF","retain":true,"qos":0}
+{"topic":"homeassistant/status","payload":"online","retain":false,"qos":0}
+{"topic":"lh/light1/set","payload":"ON","retain":false,"qos":0}
+{"topic":"lh/light1/state","payload":"ON","retain":true,"qos":0}
+{"topic":"lh/light1/brightness/set","payload":"128","retain":false,"qos":0}
+{"topic":"lh/light1/brightness","payload":"128","retain":true,"qos":0}
+{"topic":"lh/light1/set","payload":"ON","retain":false,"qos":0}
+{"topic":"lh/light1/state","payload":"ON","retain":true,"qos":0}
+{"topic":"lh/light2/set","payload":"{\"state\":\"ON\"}","retain":false,"qos":0}
+{"topic":"lh/light2/state","payload":"{\"state\":\"ON\",\"color_mode\":\"brightness\"}","retain":true,"qos":0}
+{"topic":"lh/switch1/set","payload":"ON","retain":false,"qos":0}
+{"topic":"lh/switch1/state","payload":"ON","retain":true,"qos":0}
+{"topic":"lh/sensor1/state","payload":"{\"temperature\":22.0}","retain":true,"qos":0}
+{"topic":"lh/door/state","payload":"ON","retain":true,"qos":0}
+{"topic":"lh/status","payload":"offline","retain":true,"qos":0}
+{"topic":"homeassistant/status","payload":"offline","retain":false,"qos":0}
