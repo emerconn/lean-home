@@ -124,16 +124,24 @@ def compare_ws(scenario, rec_dir, rep_dir):
 
 
 def compare_http(rec_dir, rep_dir):
-    load = lambda d: [json.loads(l) for l in (d / "http.jsonl").read_text().splitlines()]
+    # capture.mjs logs responses as they complete; requests in flight together (the page and the
+    # frontend's /.well-known fetch) finish in either order, so compare in path order.
+    load = lambda d: sorted((json.loads(l) for l in (d / "http.jsonl").read_text().splitlines()), key=lambda r: (r["path"], r["method"]))
     rec, rep = load(rec_dir), load(rep_dir)
     compared["HTTP requests"] = len(rec)
     for a, b in zip(rec, rep):
         if a["path"] == "/.well-known/oauth-authorization-server":
-            # lean-home serves relative URLs without `issuer` (HA's own fallback when it can't tell
-            # its URL) and says it doesn't fetch client_id metadata documents, which it doesn't.
-            a = json.loads(re.sub(r"https?://[^/\"]+(/auth/)", r"\1", json.dumps(a)))
-            a["res"].pop("issuer", None)
-            a["res"]["client_id_metadata_document_supported"] = False
+            # The page may navigate away before the body can be read (res: null). What the body
+            # decides is still checked: the frontend only sends code_challenge to /auth/login_flow
+            # when this advertises S256, and that request is compared exactly.
+            if a["res"] is None or b["res"] is None:
+                a, b = {**a, "res": None}, {**b, "res": None}
+            else:
+                # lean-home serves relative URLs without `issuer` (HA's own fallback when it can't
+                # tell its URL) and says it doesn't fetch client_id metadata documents (it doesn't).
+                a = json.loads(re.sub(r"https?://[^/\"]+(/auth/)", r"\1", json.dumps(a)))
+                a["res"].pop("issuer", None)
+                a["res"]["client_id_metadata_document_supported"] = False
         check(a == b, f"HTTP {a['method']} {a['path']} differs", a, b)
     check(len(rec) == len(rep), "different number of HTTP requests", [r["path"] for r in rec], [r["path"] for r in rep])
 
