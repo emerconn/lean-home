@@ -53,9 +53,13 @@ pub fn describe() -> Value {
     out.into()
 }
 
+/// An integration's handler for one entity: `true` if it owns (and handled) the entity.
+pub type Owner<'a> = &'a dyn Fn(&str, &Context) -> bool;
+
 /// Error as (websocket error code, message).
 pub fn call(
     states: &States,
+    owner: Owner,
     domain: &str,
     service: &str,
     data: &Value,
@@ -101,6 +105,9 @@ pub fn call(
             {
                 continue;
             }
+            if owner(&s.entity_id, &ctx) {
+                continue;
+            }
             let on = match service {
                 "turn_on" => true,
                 "turn_off" => false,
@@ -139,6 +146,7 @@ mod tests {
         load_demo(&s);
         call(
             &s,
+            &|_, _| false,
             "light",
             "toggle",
             &json!({"entity_id": "light.kitchen"}),
@@ -152,6 +160,7 @@ mod tests {
         // Domain mismatch: light.turn_off does not touch a switch.
         call(
             &s,
+            &|_, _| false,
             "switch",
             "turn_on",
             &Value::Null,
@@ -161,6 +170,7 @@ mod tests {
         .unwrap();
         call(
             &s,
+            &|_, _| false,
             "light",
             "turn_off",
             &json!({"entity_id": "switch.fan"}),
@@ -171,6 +181,7 @@ mod tests {
         assert_eq!(s.get("switch.fan").unwrap().state, "on");
         call(
             &s,
+            &|_, _| false,
             "homeassistant",
             "turn_off",
             &json!({"entity_id": "switch.fan, light.kitchen"}),
@@ -181,9 +192,17 @@ mod tests {
         assert_eq!(s.get("switch.fan").unwrap().state, "off");
         assert_eq!(s.get("light.kitchen").unwrap().state, "off");
         assert_eq!(
-            call(&s, "light", "explode", &Value::Null, &Value::Null, "u")
-                .unwrap_err()
-                .0,
+            call(
+                &s,
+                &|_, _| false,
+                "light",
+                "explode",
+                &Value::Null,
+                &Value::Null,
+                "u"
+            )
+            .unwrap_err()
+            .0,
             "not_found"
         );
     }

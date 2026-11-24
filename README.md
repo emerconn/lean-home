@@ -17,15 +17,19 @@ Goals 1 and 2 are hard requirements. Goal 3 is optimized around them.
 
 ## Status
 
-**Roadmap step 0 (frontend loads) works.** The official HA 2026.11.2 frontend logs in against
-lean-home, renders the Overview dashboard and toggles demo entities live. Login uses the HA
-config dir's own `.storage/auth*` files, so HA accepts tokens lean-home issues and the reverse.
-Memory: 0.5 MiB anon idle, 1.4 MiB with the frontend connected; a 5.4 MB release binary
-(single run each, [measurement rules](docs/architecture.md#measurement-rules)).
+**Roadmap steps 0 and 1 work.** The official HA 2026.11.2 frontend logs in against lean-home,
+renders the dashboard and controls entities live. Login uses the HA config dir's own
+`.storage/auth*` files, so HA accepts tokens lean-home issues and the reverse. MQTT uses the HA
+config dir's MQTT config entry and registries, and discovers lights (default and JSON schema),
+switches, sensors and binary sensors. Replaying a recorded HA session gives the same states,
+registry data and MQTT commands as HA.
+Memory: 0.6 MiB anon idle with MQTT connected, 1.4 MiB with the frontend connected; a 6.3 MB
+release binary (single run each, [measurement rules](docs/architecture.md#measurement-rules)).
 
 ```sh
-# config/ must already be onboarded by HA (lean-home has no onboarding yet);
-# hass_frontend/ comes from the home-assistant-frontend 20261028.6 package.
+# config/ must already be onboarded by HA (lean-home has no onboarding yet); MQTT starts if HA
+# has the MQTT integration set up there. hass_frontend/ comes from the home-assistant-frontend
+# 20261028.6 package. --demo adds three demo entities.
 cargo run --release -- --config config --frontend hass_frontend --listen 0.0.0.0:8123
 ```
 

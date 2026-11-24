@@ -202,8 +202,15 @@ impl Conn {
                     msg["domain"].as_str().unwrap_or_default(),
                     msg["service"].as_str().unwrap_or_default(),
                 );
+                let data = &msg["service_data"];
+                let owner = |entity_id: &str, ctx: &crate::state::Context| {
+                    app.mqtt
+                        .get()
+                        .is_some_and(|m| m.call(app, entity_id, service, data, ctx))
+                };
                 match services::call(
                     &app.states,
+                    &owner,
                     domain,
                     service,
                     &msg["service_data"],
@@ -282,11 +289,11 @@ impl Conn {
             }
             // shortcut: no translations yet, so the UI shows raw states ("on"); bundle the native domains' en.json later.
             "frontend/get_translations" => ok(json!({"resources": {}})),
-            "config/entity_registry/list_for_display" => {
-                ok(json!({"entity_categories": {"0": "config", "1": "diagnostic"}, "entities": []}))
-            }
-            "config/device_registry/list"
-            | "config/area_registry/list"
+            "config/entity_registry/list_for_display" => ok(
+                json!({"entity_categories": {"0": "config", "1": "diagnostic"}, "entities": app.registry.display_entities()}),
+            ),
+            "config/device_registry/list" => ok(app.registry.display_devices().into()),
+            "config/area_registry/list"
             | "config/floor_registry/list"
             | "config/label_registry/list" => ok(json!([])),
             "repairs/list_issues" => ok(json!({"issues": []})),
