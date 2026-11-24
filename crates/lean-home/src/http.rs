@@ -33,6 +33,10 @@ pub fn router(app: Arc<App>, frontend: &Path) -> Router {
         .route("/auth/token", post(token))
         .route("/auth/revoke", post(revoke))
         .route("/manifest.json", get(manifest))
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth_metadata),
+        )
         .route_service(
             "/auth/authorize",
             ServeFile::new(frontend.join("authorize.html")),
@@ -73,10 +77,37 @@ pub fn render_index(frontend: &Path) -> Result<String, String> {
 
 const THEME_COLOR: &str = "#2980b9";
 
-// shortcut: every unmatched GET serves the app shell; HA 404s paths that aren't a registered panel.
+// shortcut: unmatched GETs serve the app shell; HA 404s paths that aren't a registered panel.
 // Upgrade when panels are registered dynamically.
-async fn index(State(app): State<Arc<App>>) -> Html<String> {
-    Html(app.index_html.clone())
+async fn index(State(app): State<Arc<App>>, uri: axum::http::Uri) -> Response {
+    // Never for API-ish paths: clients probe these and must see a 404, not HTML.
+    if ["/.", "/api/", "/auth/"]
+        .iter()
+        .any(|p| uri.path().starts_with(p))
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    Html(app.index_html.clone()).into_response()
+}
+
+/// RFC 8414 metadata. The frontend only uses PKCE when this advertises S256.
+async fn oauth_metadata() -> Response {
+    // shortcut: relative URLs and no `issuer` (HA's fallback when it can't tell its own URL);
+    // add both once external_url/internal_url are read from core.config.
+    let body = json!({
+        "authorization_endpoint": "/auth/authorize",
+        "token_endpoint": "/auth/token",
+        "revocation_endpoint": "/auth/revoke",
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "revocation_endpoint_auth_methods_supported": ["none"],
+        // HA says true; we don't fetch client_id documents (see auth::redirect_ok).
+        "client_id_metadata_document_supported": false,
+        "code_challenge_methods_supported": ["S256"],
+        "response_types_supported": ["code"],
+        "service_documentation": "https://contributors.home-assistant.io/core/internals/auth-api/",
+    });
+    ([(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")], Json(body)).into_response()
 }
 
 async fn manifest() -> Response {
@@ -149,7 +180,6 @@ fn form(flow_id: &str, errors: Value) -> Value {
         "type": "form",
         "flow_id": flow_id,
         "handler": [PROVIDER, null],
-        "step_id": "init",
         "data_schema": [
             {"type": "string", "name": "username", "required": true},
             {"type": "string", "name": "password", "required": true},
@@ -158,6 +188,7 @@ fn form(flow_id: &str, errors: Value) -> Value {
         "description_placeholders": null,
         "last_step": null,
         "preview": null,
+        "step_id": "init",
     })
 }
 
@@ -253,13 +284,8 @@ async fn flow_step(
             "type": "create_entry",
             "flow_id": flow_id,
             "handler": [PROVIDER, null],
-            "title": "Home Assistant Local",
             "description": null,
             "description_placeholders": null,
-            "options": {},
-            "subentries": [],
-            "version": 1,
-            "minor_version": 1,
             "result": code,
         }))
         .into_response(),

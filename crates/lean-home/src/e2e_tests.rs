@@ -83,6 +83,31 @@ async fn login_then_websocket() {
         (200, "<meta name=theme-color content=#2980b9>")
     );
 
+    // The frontend only uses PKCE if this advertises S256.
+    let (status, body) = http(
+        addr,
+        "GET",
+        "/.well-known/oauth-authorization-server",
+        "text/plain",
+        "",
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["code_challenge_methods_supported"],
+        json!(["S256"])
+    );
+    assert_eq!(
+        http(addr, "GET", "/.well-known/other", "text/plain", "")
+            .await
+            .0,
+        404
+    );
+    assert_eq!(
+        http(addr, "GET", "/api/nothing", "text/plain", "").await.0,
+        404
+    );
+
     // Login flow, as the frontend sends it: JSON bodies with a text/plain content type, PKCE.
     let verifier = "a".repeat(43);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(&verifier));
