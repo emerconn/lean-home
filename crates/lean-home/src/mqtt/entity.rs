@@ -70,6 +70,8 @@ pub struct Entity {
     /// For availability_mode "latest".
     last_avail: Option<bool>,
     context: Option<(Context, Instant)>,
+    /// The device-based discovery message this entity came from, if any.
+    pub device_discovery: Option<String>,
 }
 
 impl Entity {
@@ -142,6 +144,7 @@ impl Entity {
             avail,
             last_avail: None,
             context: None,
+            device_discovery: None,
         })
     }
 

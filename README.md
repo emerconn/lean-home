@@ -20,8 +20,8 @@ Goals 1 and 2 are hard requirements. Goal 3 is optimized around them.
 **Roadmap steps 0 and 1 work.** The official HA 2026.11.2 frontend logs in against lean-home,
 renders the dashboard and controls entities live. Login uses the HA config dir's own
 `.storage/auth*` files, so HA accepts tokens lean-home issues and the reverse. MQTT uses the HA
-config dir's MQTT config entry and registries, and discovers lights (default and JSON schema),
-switches, sensors and binary sensors. Replaying a recorded HA session gives the same states,
+config dir's MQTT config entry (plain TCP or TLS) and registries, and discovers lights (default
+and JSON schema), switches, sensors and binary sensors, per component or per device. Replaying a recorded HA session gives the same states,
 registry data and MQTT commands as HA.
 Memory: 0.6 MiB anon idle with MQTT connected, 1.4 MiB with the frontend connected; a 6.3 MB
 release binary (single run each, [measurement rules](docs/architecture.md#measurement-rules)).
