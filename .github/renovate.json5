@@ -1,0 +1,21 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended", "helpers:pinGitHubActionDigests"],
+  semanticCommits: "enabled",
+  osvVulnerabilityAlerts: true,
+  lockFileMaintenance: { enabled: true },
+  packageRules: [
+    { matchManagers: ["github-actions"], semanticCommitType: "ci", groupName: "github actions" },
+  ],
+  customManagers: [
+    {
+      // Renovate has no built-in manager for rust-toolchain.toml
+      customType: "regex",
+      managerFilePatterns: ["/^rust-toolchain\\.toml$/"],
+      matchStrings: ['channel = "(?<currentValue>\\d+\\.\\d+\\.\\d+)"'],
+      depNameTemplate: "rust",
+      packageNameTemplate: "rust-lang/rust",
+      datasourceTemplate: "github-releases",
+    },
+  ],
+}
