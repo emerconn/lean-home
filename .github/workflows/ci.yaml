@@ -19,7 +19,7 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  changes:
+  ci-changes:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.diff.outputs.code }}
@@ -34,8 +34,8 @@ jobs:
           if grep -qvE '^docs/|\.md$' <<< "$files"; then echo code=true >> "$GITHUB_OUTPUT"; fi
 
   ci:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: ci-changes
+    if: needs.ci-changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
