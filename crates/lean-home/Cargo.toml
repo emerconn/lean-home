@@ -14,7 +14,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 getrandom = "0.4.3"
 hmac = "0.13.0"
 indexmap = "2.14.2"
-minijinja = { version = "3.1.0", features = ["serde"] }
+minijinja = { version = "3.1.0", features = ["serde", "loop_controls"] }
 rumqttc = { version = "0.25.1", default-features = false, features = ["use-rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }

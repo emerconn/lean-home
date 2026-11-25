@@ -1,11 +1,13 @@
 //! One MQTT-discovered entity: its config, the topics it listens to, its state and its commands.
 //! Behaviour follows HA 2026.11.2 `components/mqtt/{switch,binary_sensor,sensor,light/*}.py`.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
-use crate::state::Context;
+use crate::state::{Context, States};
+use crate::template;
 
 const PAYLOAD_NONE: &str = "None";
 /// HA attributes state writes to the context of a service call made this recently.
@@ -72,11 +74,17 @@ pub struct Entity {
     context: Option<(Context, Instant)>,
     /// The device-based discovery message this entity came from, if any.
     pub device_discovery: Option<String>,
+    /// For templates that read other entities (`states()`…).
+    states: Arc<States>,
 }
 
 impl Entity {
     /// `cfg` is a discovery payload with abbreviations and `~` already expanded.
-    pub fn new(component: &str, cfg: Map<String, Value>) -> Result<Self, String> {
+    pub fn new(
+        component: &str,
+        cfg: Map<String, Value>,
+        states: Arc<States>,
+    ) -> Result<Self, String> {
         let kind = match component {
             "switch" => Kind::Switch,
             "binary_sensor" => Kind::BinarySensor,
@@ -145,6 +153,7 @@ impl Entity {
             last_avail: None,
             context: None,
             device_discovery: None,
+            states,
         })
     }
 
@@ -345,16 +354,14 @@ impl Entity {
         let Some(tpl) = template else {
             return Some(payload.to_string());
         };
-        let value_json: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
-        let ctx = minijinja::context! {
-            value => payload,
-            value_json => minijinja::value::Serde(&value_json),
-            entity_id => &self.entity_id,
-        };
-        // shortcut: parsed on every message and without HA's template filters/globals; cache the
-        // compiled template and add HA's helpers with roadmap step 2.
-        match minijinja::Environment::new().render_str(tpl, ctx) {
-            Ok(s) => Some(s.trim().to_string()),
+        // Not JSON: value_json is undefined, so `value_json.x` fails like in HA.
+        let mut vars = json!({"value": payload, "entity_id": &self.entity_id});
+        if let Ok(v) = serde_json::from_str::<Value>(payload) {
+            vars["value_json"] = v;
+        }
+        // shortcut: compiled on every message; cache the compiled template if profiling shows it.
+        match template::render(&self.states, tpl, &vars, false) {
+            Ok((s, _)) => Some(s),
             Err(e) => {
                 eprintln!("mqtt {}: template error: {e}", self.entity_id);
                 None
@@ -568,9 +575,9 @@ impl Entity {
         let Some(tpl) = self.str(key) else {
             return value.to_string();
         };
-        let ctx = minijinja::context! { value => value, entity_id => &self.entity_id };
-        minijinja::Environment::new()
-            .render_str(tpl, ctx)
+        let vars = json!({"value": value, "entity_id": &self.entity_id});
+        template::render(&self.states, tpl, &vars, false)
+            .map(|(s, _)| s)
             .unwrap_or_else(|e| {
                 eprintln!("mqtt {}: command template error: {e}", self.entity_id);
                 value.to_string()
@@ -588,7 +595,8 @@ mod tests {
     use super::*;
 
     fn entity(component: &str, cfg: Value) -> Entity {
-        let mut e = Entity::new(component, cfg.as_object().unwrap().clone()).unwrap();
+        let mut e =
+            Entity::new(component, cfg.as_object().unwrap().clone(), Arc::default()).unwrap();
         e.entity_id = format!("{component}.test");
         e
     }
@@ -681,5 +689,33 @@ mod tests {
         assert_eq!(b.state().0, "on");
         b.on_message("d", "garbage");
         assert_eq!(b.state().0, "on");
+    }
+
+    #[test]
+    fn value_templates_with_ha_helpers() {
+        let mut t = entity(
+            "sensor",
+            json!({"state_topic": "t", "value_template": "{{ value_json.t | float(0) | round(1) }} {{ value_json.ok }}"}),
+        );
+        t.on_message("t", r#"{"t": "21.46", "ok": true}"#);
+        // Python's str(): True, not true.
+        assert_eq!(t.state().0, "21.5 True");
+        // Not JSON: value_json is undefined, so the message is dropped, as in HA.
+        t.on_message("t", "garbage");
+        assert_eq!(t.state().0, "21.5 True");
+
+        let s = Arc::new(States::default());
+        s.set("input.mode", "away", Map::new(), Context::new(None));
+        let mut w = Entity::new(
+            "sensor",
+            json!({"state_topic": "w", "value_template": "{{ value }} ({{ states('input.mode') }})"})
+                .as_object()
+                .unwrap()
+                .clone(),
+            s,
+        )
+        .unwrap();
+        w.on_message("w", "5");
+        assert_eq!(w.state().0, "5 (away)");
     }
 }

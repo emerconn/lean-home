@@ -342,7 +342,7 @@ impl Mqtt {
             }
             return;
         };
-        let mut entity = match Entity::new(component, cfg) {
+        let mut entity = match Entity::new(component, cfg, app.states.clone()) {
             Ok(e) => e,
             Err(e) => return eprintln!("mqtt: {component}/{id}: {e}"),
         };
