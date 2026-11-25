@@ -196,12 +196,24 @@ to the CI replay.
 4. **Automations and scripts.** Start with two checks on the template engine from 2.2, since
    conditions and action data now depend on it, so a template bug is fixed in the step it would
    break:
-   - **HA's template tests.** Fetch `tests/helpers/template/` from HA core at the release we
-     match (not in the ha-src checkout) and port the cases for the helpers 2.2 built. Fix what
-     they catch.
-   - **Template errors.** Add a failing template (with `report_errors`) to the `automations`
-     scenario and re-record, so `render_template`'s error events are checked against HA. Today
-     they follow HA's source, unverified.
+   - **HA's template tests.** (Done.) Instead of porting asserts by hand,
+     `compat/template-cases.py` takes every literal template from HA's
+     `tests/helpers/template/` (with the states each test sets) and has HA itself render it
+     (`compat/fixtures/templates/cases.jsonl`: text, parsed result, error, listeners). A test
+     replays them through lean-home: of 611 cases, the 195 that use only implemented helpers
+     all match HA, except 2 documented gaps (a listener HA adds on `state == "on"`
+     comparisons, which can't change the result). The other 416 use HA helpers not built yet
+     (see "Deferred"). It found and fixed: keyword arguments (`float(x, default=1)`,
+     `int(x, base=16)`), an explicit `none` default, `states | count` listening to every
+     change instead of only additions and removals, extra listeners from `states.x.y`,
+     entity and domain name validation, `to_json` (datetimes error; `ensure_ascii` is Python's
+     `json`), static templates' results staying unparsed, HA's 256 KiB output limit, dict
+     order (minijinja `preserve_order`), Jinja's `urlencode` and HA's `random`.
+   - **Template errors.** (Done.) The `automations` scenario now records five failing or
+     warning templates. HA sends each log and error event both before and after the result
+     (setup, then the first render), and an undefined variable adds an `'x' is undefined`
+     line (`WARNING` when rendered, `ERROR` before an `UndefinedError`). lean-home now does the
+     same, checked message for message against the recording (`ws.rs` tests).
 
    Then: triggers (state, time, MQTT first), conditions, actions; the `automation.*`/`script.*`
    entities and services; the WebSocket commands the editor uses. Add the template helpers
@@ -238,7 +250,9 @@ Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the
 
 | Gap | Do it | Why then |
 |---|---|---|
-| Template helpers beyond the core set: datetime arithmetic (`timedelta`, `today_at`, `relative_time`), areas/devices/labels, `expand`, regex, `state_translated` | With 2.4, by what automations use | Each is small; add them against HA's tests when a case needs one |
+| HA template helpers not built yet, by HA test cases that need them (`ha_template_cases` prints the full list): datetime (`strptime` 26, `timedelta`/`as_timedelta`/`timedelta_string` 30, `relative_time`/`time_since`/`time_until` 30, `today_at`, `as_local`, `timestamp_*`), math (`average`, `median`, `statistical_mode`, `log`, trig, bitwise, `clamp`, `min`/`max` as globals), state (`expand` 12, `closest`/`distance` 23, `state_translated`/`state_attr_translated` 16, `integration_entities`), regex (24), collections (`flatten`, `combine`, `union`/`intersect`/`difference`…), areas/devices/floors/labels (~70), strings (`slugify`, `ordinal`, `wrap`), `typeof`, hashes, base64, `version`, issues | With 2.4, by what automations use; regenerate the count with the corpus | Each is small and has HA's cases waiting in the corpus: add it to `IMPLEMENTED` in `template_ha_cases.rs` and the cases start being compared |
+| Undefined-variable warnings name the first undefined variable only, and none for a missing attribute of a defined variable or an `if`/`for` over an undefined (HA warns there too) | When the template editor shows a wrong warning | Errors and results are right; only the `report_errors` log text can differ |
+| Template re-render rate limits after an error (HA waits up to 60 s before re-rendering a failed template) | With the rate limit row below | lean-home retries on the next matching change |
 | `render_template` has no rate limit (HA: 1/s for domain listeners, 1/min for all states) | If a dashboard iterating all states proves costly | Re-rendering on every change is correct, only more work |
 | Registries are read-only: new MQTT entities aren't written to `core.entity_registry` (HA later picks the same ids, normally) | Step 5 | Needed once lean-home renames entities or assigns areas itself, i.e. with config flows; writing HA's file needs care not to corrupt it |
 | HA's opt-in IP ban (`http: login_attempts_threshold`, `ip_bans.yaml`) | Now unblocked (2.3 parses `configuration.yaml`); when a user asks | Off by default in HA too; lean-home already serializes password checks and backs off per IP |

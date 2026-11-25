@@ -43,17 +43,27 @@ struct TemplateSub {
 }
 
 impl TemplateSub {
-    /// The event to send, if the result changed (HA sends nothing for an unchanged result).
-    fn refresh(&mut self, states: &Arc<crate::state::States>) -> Option<Value> {
-        match template::render(states, &self.template, &self.variables, self.strict) {
+    /// The events a render sends, as HA's `handle_render_template` does: with `report_errors`,
+    /// the lines the engine logged (`'x' is undefined`) and then any error; the result only when
+    /// it changed.
+    fn refresh(&mut self, states: &Arc<crate::state::States>) -> Vec<Value> {
+        let (rendered, logs) =
+            template::render_logged(states, &self.template, &self.variables, self.strict);
+        let mut events: Vec<Value> = if self.report_errors {
+            logs.into_iter()
+                .map(|(level, msg)| json!({"error": msg, "level": level}))
+                .collect()
+        } else {
+            vec![]
+        };
+        match rendered {
             Ok((text, listeners)) => {
                 self.listeners = listeners;
-                let r = template::parse_result(&text);
-                if self.last.as_ref() == Some(&r) {
-                    return None;
+                let r = template::result(&self.template, &text);
+                if self.last.as_ref() != Some(&r) {
+                    self.last = Some(r.clone());
+                    events.push(json!({"result": r, "listeners": self.listeners.json()}));
                 }
-                self.last = Some(r.clone());
-                Some(json!({"result": r, "listeners": self.listeners.json()}))
             }
             Err(e) => {
                 // A failed render listens to everything, so it can recover (HA's RenderInfo).
@@ -62,11 +72,41 @@ impl TemplateSub {
                     ..Default::default()
                 };
                 self.last = None;
-                self.report_errors
-                    .then(|| json!({"error": e, "level": "ERROR"}))
+                if self.report_errors {
+                    events.push(json!({"error": e, "level": "ERROR"}));
+                }
             }
         }
+        events
     }
+}
+
+/// A new `render_template` subscription and its first replies. As recorded from HA
+/// (compat/fixtures/automations): setup renders once and logs (log and error lines, before the
+/// result), then the first refresh sends its events again plus the result.
+fn start_render_template(
+    id: u64,
+    tpl: &str,
+    msg: &Value,
+    states: &Arc<crate::state::States>,
+) -> (TemplateSub, Vec<Value>) {
+    let mut sub = TemplateSub {
+        template: tpl.into(),
+        variables: msg["variables"].clone(),
+        strict: msg["strict"] == true,
+        report_errors: msg["report_errors"] == true,
+        listeners: Default::default(),
+        last: None,
+    };
+    let first = sub.refresh(states);
+    let replies = first
+        .iter()
+        .filter(|e| e.get("error").is_some())
+        .map(|e| event(id, e.clone()))
+        .chain(std::iter::once(result(id, Value::Null)))
+        .chain(first.iter().map(|e| event(id, e.clone())))
+        .collect();
+    (sub, replies)
 }
 
 struct Conn {
@@ -208,9 +248,10 @@ impl Conn {
         for (id, sub) in &mut self.subs {
             if let Sub::Template(t) = sub
                 && t.listeners.time
-                && let Some(ev) = t.refresh(&self.app.states)
             {
-                send(ws, &event(*id, ev)).await?;
+                for ev in t.refresh(&self.app.states) {
+                    send(ws, &event(*id, ev)).await?;
+                }
             }
         }
         Ok(())
@@ -220,11 +261,16 @@ impl Conn {
         // shortcut: serialized per subscriber; serialize once and fan out bytes when many clients matter.
         for (id, sub) in &mut self.subs {
             let ev = match sub {
-                Sub::Template(t) if t.listeners.matches(&change.entity_id) => {
-                    match t.refresh(&self.app.states) {
-                        Some(ev) => ev,
-                        None => continue,
+                Sub::Template(t)
+                    if t.listeners.matches(
+                        &change.entity_id,
+                        change.old.is_none() || change.new.is_none(),
+                    ) =>
+                {
+                    for ev in t.refresh(&self.app.states) {
+                        send(ws, &event(*id, ev)).await?;
                     }
+                    continue;
                 }
                 Sub::Entities(None) => change.diff(),
                 Sub::Entities(Some(ids)) if ids.iter().any(|i| **i == *change.entity_id) => {
@@ -340,22 +386,9 @@ impl Conn {
                         "required key not provided @ data['template']",
                     )];
                 };
-                let mut sub = TemplateSub {
-                    template: tpl.into(),
-                    variables: msg["variables"].clone(),
-                    strict: msg["strict"] == true,
-                    report_errors: msg["report_errors"] == true,
-                    listeners: Default::default(),
-                    last: None,
-                };
-                // HA acknowledges first, then sends the first render.
-                // shortcut: a template that fails to render reports its error once (with
-                // report_errors); HA also logs it during setup, which may add a second event.
-                let first = sub.refresh(&app.states);
+                let (sub, replies) = start_render_template(id, tpl, &msg, &app.states);
                 self.subs.insert(id, Sub::Template(Box::new(sub)));
-                std::iter::once(result(id, Value::Null))
-                    .chain(first.map(|e| event(id, e)))
-                    .collect()
+                replies
             }
             // Data stores we don't have yet: the frontend treats null as "not set".
             // shortcut: set_user_data/set_system_data stay unknown_command; persist to
@@ -434,4 +467,57 @@ fn panels() -> Value {
         "notfound": panel("notfound", "notfound", Value::Null, Value::Null, false, true),
         "_my_redirect": panel("_my_redirect", "my", Value::Null, Value::Null, false, true),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every `render_template` the frontend and the scenario sent in the automations recording
+    /// whose replies don't depend on device states: lean-home must answer exactly as HA did.
+    #[test]
+    fn render_template_replies_match_ha() {
+        let msgs: Vec<(Value, Value)> =
+            include_str!("../../../compat/fixtures/automations/ws.jsonl")
+                .lines()
+                .map(|l| serde_json::from_str::<Value>(l).unwrap())
+                .flat_map(|l| {
+                    let dir = l["dir"].clone();
+                    match &l["msg"] {
+                        Value::Array(a) => a
+                            .iter()
+                            .map(|m| (dir.clone(), m.clone()))
+                            .collect::<Vec<_>>(),
+                        m => vec![(dir, m.clone())],
+                    }
+                })
+                .collect();
+        let states = Arc::new(crate::state::States::default());
+        let mut checked = 0;
+        for (_, sent) in msgs
+            .iter()
+            .filter(|(d, m)| d == "send" && m["type"] == "render_template")
+        {
+            let tpl = sent["template"].as_str().unwrap();
+            // The live device template is checked against its whole sequence in template.rs.
+            if tpl.contains("demo_device") {
+                continue;
+            }
+            let id = sent["id"].as_u64().unwrap();
+            let want: Vec<&Value> = msgs
+                .iter()
+                .filter(|(d, m)| d == "recv" && m["id"] == id)
+                .map(|(_, m)| m)
+                .collect();
+            let (_, got) = start_render_template(id, tpl, sent, &states);
+            assert_eq!(
+                got.iter().collect::<Vec<_>>(),
+                want,
+                "render_template {tpl:?}"
+            );
+            checked += 1;
+        }
+        // "## Welcome {{ user }}", four failing templates, one with an undefined variable
+        assert_eq!(checked, 6);
+    }
 }
