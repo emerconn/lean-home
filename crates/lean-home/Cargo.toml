@@ -28,5 +28,5 @@ webpki-roots = "1.0.12"
 
 [dev-dependencies]
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
-tokio = { version = "1.54.1", features = ["io-util"] }
+tokio = { version = "1.54.1", features = ["io-util", "test-util"] }
 tokio-tungstenite = "0.30.0"

@@ -348,7 +348,7 @@ impl Mqtt {
         };
         let reg = app
             .registry
-            .mqtt_entity(entity.kind.domain(), entity.unique_id());
+            .entity("mqtt", entity.kind.domain(), entity.unique_id());
         if reg.is_some_and(|r| !r["disabled_by"].is_null()) {
             return; // HA creates no state for disabled entities
         }

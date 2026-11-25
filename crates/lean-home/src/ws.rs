@@ -114,6 +114,8 @@ struct Conn {
     user: User,
     subs: HashMap<u64, Sub>,
     last_id: u64,
+    /// Results of commands that finish later (a `call_service` that runs a script).
+    later: tokio::sync::mpsc::UnboundedSender<Value>,
 }
 
 async fn send(ws: &mut WebSocket, v: &Value) -> Result<(), axum::Error> {
@@ -154,11 +156,13 @@ async fn run(app: Arc<App>, mut ws: WebSocket) -> Result<(), axum::Error> {
     .await?;
 
     let (mut rx, _) = app.states.subscribe();
+    let (later, mut later_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut conn = Conn {
         app,
         user,
         subs: HashMap::new(),
         last_id: 0,
+        later,
     };
     loop {
         tokio::select! {
@@ -185,6 +189,13 @@ async fn run(app: Arc<App>, mut ws: WebSocket) -> Result<(), axum::Error> {
                     }
                     send(&mut ws, &reply).await?;
                 }
+            }
+            Some(reply) = later_rx.recv() => {
+                // As for inline results: the state changes the call caused go out first.
+                while let Ok(change) = rx.try_recv() {
+                    conn.forward(&mut ws, &change).await?;
+                }
+                send(&mut ws, &reply).await?;
             }
             change = rx.recv() => match change {
                 Ok(change) => conn.forward(&mut ws, &change).await?,
@@ -312,30 +323,70 @@ impl Conn {
             })),
             "get_states" => ok(app.states.all().iter().map(|s| s.json()).collect()),
             "get_config" => ok(app.config_json()),
-            "get_services" => ok(services::describe()),
+            "get_services" => ok(services::describe(app)),
             "get_panels" => ok(panels()),
             "call_service" => {
                 let (domain, service) = (
                     msg["domain"].as_str().unwrap_or_default(),
                     msg["service"].as_str().unwrap_or_default(),
                 );
-                let data = &msg["service_data"];
-                let owner = |entity_id: &str, ctx: &crate::state::Context| {
-                    app.mqtt
-                        .get()
-                        .is_some_and(|m| m.call(app, entity_id, service, data, ctx))
-                };
-                match services::call(
-                    &app.states,
-                    &owner,
+                let ctx = crate::state::Context::new(Some(self.user.id.clone()));
+                if domain == "script" {
+                    // A script runs for a while (`script.blink` waits for it to finish): answer
+                    // when it's done and keep serving this connection meanwhile, as HA does.
+                    let (app, later) = (app.clone(), self.later.clone());
+                    let (domain, service) = (domain.to_string(), service.to_string());
+                    let (data, target) = (msg["service_data"].clone(), msg["target"].clone());
+                    tokio::spawn(async move {
+                        let r = services::dispatch(
+                            &app,
+                            &domain,
+                            &service,
+                            data,
+                            target,
+                            ctx.clone(),
+                            vec![],
+                        )
+                        .await;
+                        let _ = later.send(match r {
+                            Ok(_) => result(id, json!({"context": ctx.json()})),
+                            Err((code, m)) => error(id, code, &m),
+                        });
+                    });
+                    return vec![];
+                }
+                match services::call_sync(
+                    app,
                     domain,
                     service,
                     &msg["service_data"],
                     &msg["target"],
-                    &self.user.id,
+                    ctx,
                 ) {
                     Ok(ctx) => ok(json!({"context": ctx.json()})),
                     Err((code, m)) => vec![error(id, code, &m)],
+                }
+            }
+            "trace/list" => {
+                let domain = msg["domain"].as_str().unwrap_or_default();
+                ok(app
+                    .scripts
+                    .traces
+                    .list(domain, msg["item_id"].as_str())
+                    .into())
+            }
+            "trace/get" => {
+                let (d, i, r) = (
+                    msg["domain"].as_str(),
+                    msg["item_id"].as_str(),
+                    msg["run_id"].as_str(),
+                );
+                match (d, i, r) {
+                    (Some(d), Some(i), Some(r)) => match app.scripts.traces.get(d, i, r) {
+                        Some(t) => ok(t),
+                        None => vec![error(id, "not_found", "The trace could not be found")],
+                    },
+                    _ => vec![error(id, "invalid_format", "required key not provided")],
                 }
             }
             "subscribe_entities" => {

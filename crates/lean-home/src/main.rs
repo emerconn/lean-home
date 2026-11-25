@@ -1,11 +1,14 @@
 mod auth;
+mod condition;
 mod config;
 mod http;
 mod mqtt;
 mod registry;
+mod script;
 mod services;
 mod state;
 mod template;
+mod trace;
 mod ws;
 
 #[cfg(test)]
@@ -28,6 +31,7 @@ pub struct App {
     pub registry: registry::Registry,
     pub mqtt: OnceLock<Arc<mqtt::Mqtt>>,
     pub config: config::Config,
+    pub scripts: script::Scripts,
 }
 
 impl App {
@@ -39,14 +43,18 @@ impl App {
             config.automations.len(),
             config.scripts.len()
         );
+        let registry = registry::Registry::load(config_dir)?;
+        let states: Arc<state::States> = Arc::default();
+        let scripts = script::Scripts::load(&config.scripts, &registry, &states);
         let app = Self {
             config,
             auth: auth::Auth::load(config_dir)?,
-            states: Arc::default(),
+            states,
             index_html: http::render_index(frontend)?,
             config_dir: config_dir.into(),
-            registry: registry::Registry::load(config_dir)?,
+            registry,
             mqtt: OnceLock::new(),
+            scripts,
         };
         if demo {
             services::load_demo(&app.states);

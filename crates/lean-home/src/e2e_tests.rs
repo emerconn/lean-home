@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::tungstenite::Message;
 
-fn fixture_dir() -> PathBuf {
+pub(crate) fn fixture_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("lean-home-test-{}", crate::auth::random_hex(8)));
     let storage = dir.join("config/.storage");
     std::fs::create_dir_all(&storage).unwrap();
@@ -63,6 +63,11 @@ async fn http(
 #[tokio::test]
 async fn login_then_websocket() {
     let dir = fixture_dir();
+    std::fs::write(
+        dir.join("config/configuration.yaml"),
+        "script:\n  hello:\n    sequence:\n      - action: switch.turn_on\n        target:\n          entity_id: switch.fan\n",
+    )
+    .unwrap();
     let app = Arc::new(crate::App::load(&dir.join("config"), &dir.join("frontend"), true).unwrap());
     let router = crate::http::router(app, &dir.join("frontend"));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -307,6 +312,47 @@ async fn login_then_websocket() {
     .unwrap();
     recv(&mut ws).await;
     assert_eq!(recv(&mut ws).await["event"]["result"], 2);
+
+    // A script call is answered when the run ends, after the state changes it caused; its
+    // trace is then listed and readable.
+    ws.send(cmd(json!({"id": 7, "type": "call_service", "domain": "script", "service": "hello", "service_data": {}})))
+        .await
+        .unwrap();
+    let mut got = vec![];
+    loop {
+        let m = recv(&mut ws).await;
+        let done = m["id"] == 7;
+        got.push(m);
+        if done {
+            break;
+        }
+    }
+    let last = got.last().unwrap();
+    assert_eq!(
+        (last["type"].clone(), last["success"].clone()),
+        (json!("result"), json!(true))
+    );
+    assert!(
+        got.iter()
+            .any(|m| m["event"]["c"]["script.hello"]["+"]["s"] == "off"),
+        "{got:?}"
+    );
+    ws.send(cmd(
+        json!({"id": 8, "type": "trace/list", "domain": "script", "item_id": "hello"}),
+    ))
+    .await
+    .unwrap();
+    let list = recv(&mut ws).await;
+    assert_eq!(list["result"][0]["script_execution"], "finished");
+    let run_id = list["result"][0]["run_id"].clone();
+    ws.send(cmd(json!({"id": 9, "type": "trace/get", "domain": "script", "item_id": "hello", "run_id": run_id})))
+        .await
+        .unwrap();
+    let t = recv(&mut ws).await;
+    assert_eq!(
+        t["result"]["trace"]["sequence/0"][0]["result"]["params"]["service"],
+        "turn_on"
+    );
 
     std::fs::remove_dir_all(dir).ok();
 }

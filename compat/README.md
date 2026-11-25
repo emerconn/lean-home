@@ -46,7 +46,7 @@ without `report_errors`, `nope.attr` (undefined), `nope` in strict mode, and `{{
 (renders, with a warning). Then: fan on (fires the state automation), an MQTT button press (fires the
 script), fan off, door open, `automation.trigger` (now blocked by its condition), `script.blink`
 (takes the `default` branch). Then it opens the automation list, editor and trace pages and the
-script list and editor. Same files as `mqtt-discovery`.
+script list, editor and trace page. Same files as `mqtt-discovery`.
 
 `configuration.json` is HA's own loader's result for `compat/automations/configuration.yaml`
 (`annotatedyaml` in the HA image); `config.rs` tests that lean-home's loader gives the same.
