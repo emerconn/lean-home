@@ -1,11 +1,12 @@
 //! Conditions, as HA's `helpers/condition/` evaluates and traces them: `state`, `numeric_state`,
-//! `template`, `and`/`or`/`not`, and the shorthands (a template string, `- and: [...]`).
+//! `template`, `trigger`, `and`/`or`/`not`, and the shorthands (a template string, `- and: [...]`).
 
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use crate::state::States;
+use crate::script::{render_complex, time_period};
+use crate::state::{States, iso};
 use crate::template;
 use crate::trace::{ElementRef, Recorder};
 
@@ -19,6 +20,8 @@ pub enum Condition {
         states: Vec<Value>,
         attribute: Option<String>,
         match_any: bool,
+        /// `for:`, a duration or a template of one.
+        for_: Option<Value>,
     },
     NumericState {
         entity_ids: Vec<String>,
@@ -28,6 +31,8 @@ pub enum Condition {
         value_template: Option<String>,
     },
     Template(String),
+    /// The automation's trigger has one of these ids.
+    Trigger(Vec<String>),
 }
 
 /// `cv.entity_ids`: a list, or a comma-separated string.
@@ -79,11 +84,6 @@ impl Condition {
             "or" => Self::Or(list("conditions")?),
             "not" => Self::Not(list("conditions")?),
             "state" => {
-                if m.contains_key("for") {
-                    // shortcut: `for:` needs the entity's last_changed against a duration; add
-                    // with time-based triggers in the automation step.
-                    return Err("state condition: 'for' is not supported yet".into());
-                }
                 let states = match m.get("state") {
                     Some(Value::Array(a)) => a.clone(),
                     Some(s) => vec![s.clone()],
@@ -94,6 +94,7 @@ impl Condition {
                     states,
                     attribute: opt_str("attribute"),
                     match_any: m.get("match").and_then(Value::as_str) == Some("any"),
+                    for_: m.get("for").cloned(),
                 }
             }
             "numeric_state" => {
@@ -114,8 +115,12 @@ impl Condition {
                 opt_str("value_template")
                     .ok_or("template condition: required key 'value_template' missing")?,
             ),
-            // shortcut: time, sun, zone, device, trigger… conditions come with the automations
-            // that use them (trigger needs the automation's trigger data).
+            "trigger" => Self::Trigger(match m.get("id") {
+                Some(Value::Array(a)) => a.iter().map(id_string).collect(),
+                Some(id) => vec![id_string(id)],
+                None => return Err("trigger condition: required key 'id' missing".into()),
+            }),
+            // shortcut: time, sun, zone, device… conditions come with the configs that use them.
             other => return Err(format!("condition type '{other}' is not supported yet")),
         })
     }
@@ -196,12 +201,13 @@ impl Condition {
                 states,
                 attribute,
                 match_any,
+                for_,
             } => {
                 let mut result = !match_any;
                 let mut errors = vec![];
                 for (i, id) in entity_ids.iter().enumerate() {
                     let el = ev.element(&format!("{path}/entity_id/{i}"));
-                    match state(ev, &el, id, states, attribute.as_deref()) {
+                    match state(ev, &el, id, states, attribute.as_deref(), for_.as_ref()) {
                         Ok(true) => result = true,
                         Ok(false) if !match_any => return Ok(false),
                         Ok(false) => {}
@@ -267,8 +273,17 @@ impl Condition {
                 );
                 Ok(result)
             }
+            Self::Trigger(ids) => Ok(ev.vars.get("trigger").is_some_and(|t| {
+                t.get("id")
+                    .is_some_and(|id| ids.iter().any(|i| *id == Value::String(i.clone())))
+            })),
         }
     }
+}
+
+/// `cv.string`: a trigger id written as a number is its text.
+pub fn id_string(v: &Value) -> String {
+    v.as_str().map_or_else(|| v.to_string(), String::from)
 }
 
 /// HA's `condition.state` for one entity.
@@ -278,6 +293,7 @@ fn state(
     entity_id: &str,
     wanted: &[Value],
     attribute: Option<&str>,
+    for_: Option<&Value>,
 ) -> Result<bool, String> {
     let s = ev
         .states
@@ -312,11 +328,26 @@ fn state(
             break;
         }
     }
+    let Some(for_) = for_.filter(|_| is_state) else {
+        ev.set(
+            at,
+            json!({"result": is_state, "state": value, "wanted_state": wanted_value}),
+        );
+        return Ok(is_state);
+    };
+    let secs = render_complex(ev.states, for_, ev.vars)
+        .map_err(|e| format!("In 'state' condition: template error: {e}"))
+        .and_then(|v| {
+            time_period(&v).map_err(|e| format!("In 'state' condition: schema error: {e}"))
+        })?;
+    // HA traces the instant the state must have changed before, as `duration`.
+    let since = chrono::Utc::now() - chrono::Duration::microseconds((secs * 1e6) as i64);
+    let ok = since > s.last_changed;
     ev.set(
         at,
-        json!({"result": is_state, "state": value, "wanted_state": wanted_value}),
+        json!({"result": ok, "state": value, "duration": iso(since)}),
     );
-    Ok(is_state)
+    Ok(ok)
 }
 
 /// HA's `condition.async_numeric_state` for one entity.
@@ -522,5 +553,37 @@ mod tests {
         );
         assert_eq!(r, Ok(true));
         assert!(Condition::parse(&json!({"condition": "sun", "after": "sunset"})).is_err());
+    }
+
+    #[test]
+    fn trigger_and_state_for() {
+        let s = states();
+        let mut vars = Map::new();
+        vars.insert("trigger".into(), json!({"id": "door", "idx": "0"}));
+        let ev = Eval {
+            states: &s,
+            vars: &vars,
+            trace: None,
+        };
+        let check = |c: Value| Condition::parse(&c).unwrap().check(&ev, "c", None);
+        assert_eq!(
+            check(json!({"condition": "trigger", "id": "door"})),
+            Ok(true)
+        );
+        assert_eq!(
+            check(json!({"condition": "trigger", "id": ["a", "door"]})),
+            Ok(true)
+        );
+        assert_eq!(check(json!({"condition": "trigger", "id": "a"})), Ok(false));
+        // switch.fan has been "off" for a moment, not for an hour
+        let fan = |f: Value| json!({"condition": "state", "entity_id": "switch.fan", "state": "off", "for": f});
+        assert_eq!(check(fan(json!({"hours": 1}))), Ok(false));
+        assert_eq!(check(fan(json!(0))), Ok(true));
+        assert_eq!(check(fan(json!("{{ 0 }}"))), Ok(true));
+        assert!(
+            check(fan(json!("nope")))
+                .unwrap_err()
+                .contains("schema error")
+        );
     }
 }

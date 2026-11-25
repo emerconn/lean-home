@@ -32,7 +32,7 @@ jobs:
           files=$(git diff --name-only "${{ github.event.pull_request.base.sha || github.event.before }}" HEAD)
           if grep -qvE '^docs/|\.md$' <<< "$files"; then echo code=true >> "$GITHUB_OUTPUT"; fi
 
-  # Replay the recorded HA sessions (compat/fixtures) against lean-home and diff the results. One job for both
+  # Replay the recorded HA sessions (compat/fixtures) against lean-home and diff the results. One job for all
   # scenarios: as parallel jobs each paid the setup and a cold Chromium, and the total got slower.
   replay:
     needs: compat-changes
@@ -70,6 +70,8 @@ jobs:
       - run: compat/compare.py frontend-load compat/fixtures/frontend-load bench/.work/replay/frontend-load
       - run: compat/replay.sh mqtt-discovery
       - run: compat/compare.py mqtt-discovery compat/fixtures/mqtt-discovery bench/.work/replay/mqtt-discovery
+      - run: compat/replay.sh automations
+      - run: compat/compare.py automations compat/fixtures/automations bench/.work/replay/automations
       # On failure: lean-home's server.log, the browser's failure.log and failure.png, what was recorded so far.
       - if: failure()
         uses: actions/upload-artifact@v7.0.2

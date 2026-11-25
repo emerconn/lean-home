@@ -52,7 +52,8 @@ script list, editor and trace page. Same files as `mqtt-discovery`.
 (`annotatedyaml` in the HA image); `config.rs` tests that lean-home's loader gives the same.
 
 Re-record with `compat/capture-mqtt.sh automations`. Two recordings differ only in set-ordered data,
-e.g. `render_template`'s `listeners.entities`. Not in CI yet: lean-home doesn't run automations.
+e.g. `render_template`'s `listeners.entities`. In CI; until the automation and script editors are
+built, `compare.py` skips their config requests and the WebSocket commands only they send.
 
 ## Template cases
 
@@ -80,5 +81,5 @@ and for MQTT the same broker, devices and responder, from `mqtt-scenario.sh`) in
 `compat/compare.py <scenario> compat/fixtures/<scenario> bench/.work/replay/<scenario>` then
 checks it per message against the recording and exits non-zero on any difference. Its tolerances
 (set-ordered data in HA, the demo entities, unimplemented commands) are listed in the script. CI
-runs both scenarios (`.github/workflows/compat.yaml`). Locally, set `FRONTEND` to a
+runs all three scenarios (`.github/workflows/compat.yaml`). Locally, set `FRONTEND` to a
 `hass_frontend` dir and `CHROMIUM` if Chromium isn't at `/usr/bin/chromium`.

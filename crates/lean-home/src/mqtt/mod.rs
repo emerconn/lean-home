@@ -12,6 +12,7 @@ use std::time::Duration;
 use indexmap::IndexMap;
 use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Outgoing, Packet, QoS};
 use serde_json::{Map, Value};
+use tokio::sync::broadcast;
 
 use crate::App;
 use crate::state::Context;
@@ -142,6 +143,18 @@ pub struct Mqtt {
     entities: Mutex<IndexMap<(String, String), Entity>>,
     /// Signalled once the DISCONNECT has gone out.
     stopped: tokio::sync::Notify,
+    /// Topics subscribed for others (automations' MQTT triggers), with their QoS.
+    extra: Mutex<Vec<(String, u8)>>,
+    /// Every message received, for those subscribers.
+    messages: broadcast::Sender<Arc<Message>>,
+}
+
+/// A received message, as HA's `ReceiveMessage` gives it to an MQTT trigger.
+#[derive(Debug)]
+pub struct Message {
+    pub topic: String,
+    pub payload: String,
+    pub qos: u8,
 }
 
 impl Mqtt {
@@ -177,6 +190,8 @@ impl Mqtt {
             settings,
             entities: Mutex::default(),
             stopped: tokio::sync::Notify::new(),
+            extra: Mutex::default(),
+            messages: broadcast::channel(1024).0,
         });
         let m = mqtt.clone();
         tokio::spawn(async move {
@@ -185,7 +200,7 @@ impl Mqtt {
                     Ok(Event::Incoming(Packet::ConnAck(_))) => m.on_connect(),
                     Ok(Event::Incoming(Packet::Publish(p))) => {
                         match std::str::from_utf8(&p.payload) {
-                            Ok(payload) => m.on_message(&app, &p.topic, payload),
+                            Ok(payload) => m.on_message(&app, &p.topic, payload, p.qos as u8),
                             Err(_) => eprintln!("mqtt: ignoring non-UTF-8 payload on {}", p.topic),
                         }
                     }
@@ -235,6 +250,9 @@ impl Mqtt {
                 self.subscribe(&t, entity_qos(e));
             }
         }
+        for (t, q) in self.extra.lock().unwrap().iter() {
+            self.subscribe(t, *q);
+        }
         if let Some(b) = &self.settings.birth {
             self.publish(&Publish {
                 topic: b.topic.clone(),
@@ -243,6 +261,14 @@ impl Mqtt {
                 retain: b.retain,
             });
         }
+    }
+
+    /// Subscribe for an automation's trigger, now and on every reconnect; the messages come
+    /// through `messages`.
+    pub fn subscribe_for(&self, topic: &str, q: u8) -> broadcast::Receiver<Arc<Message>> {
+        self.extra.lock().unwrap().push((topic.into(), q));
+        self.subscribe(topic, q);
+        self.messages.subscribe()
     }
 
     fn subscribe(&self, topic: &str, q: u8) {
@@ -260,7 +286,14 @@ impl Mqtt {
         }
     }
 
-    fn on_message(&self, app: &App, topic: &str, payload: &str) {
+    fn on_message(&self, app: &App, topic: &str, payload: &str, qos: u8) {
+        if self.messages.receiver_count() > 0 {
+            let _ = self.messages.send(Arc::new(Message {
+                topic: topic.into(),
+                payload: payload.into(),
+                qos,
+            }));
+        }
         if let Some(rest) = topic.strip_prefix(&format!("{}/", self.settings.prefix))
             && let Some((component, node, object)) = parse_discovery_topic(rest)
         {
@@ -484,7 +517,7 @@ fn parse_discovery_topic(rest: &str) -> Option<(&str, Option<&str>, &str)> {
 }
 
 /// MQTT topic filter matching (`+`, `#`).
-fn topic_matches(filter: &str, topic: &str) -> bool {
+pub fn topic_matches(filter: &str, topic: &str) -> bool {
     let (mut f, mut t) = (filter.split('/'), topic.split('/'));
     loop {
         match (f.next(), t.next()) {

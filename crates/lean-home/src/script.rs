@@ -1,6 +1,7 @@
 //! Scripts: HA's script engine (`helpers/script.py`) and the `script` integration
 //! (`components/script/`). Each run is a task that executes the sequence step by step, records a
-//! trace as it goes (`trace.rs`), and keeps the `script.*` entity's state up to date.
+//! trace as it goes (`trace.rs`), and keeps the entity's state up to date. An automation's actions
+//! run here too (`automation.rs`): its entity is a `ScriptEntity` in the `automation` domain.
 
 use std::fmt::Write as _;
 use std::future::Future;
@@ -16,7 +17,7 @@ use tokio::sync::watch;
 use crate::condition::{Condition, Eval, entity_ids};
 use crate::services::{Outcome, dispatch};
 use crate::state::{Context, States, iso};
-use crate::trace::{ElementRef, Recorder, Traces};
+use crate::trace::{ElementRef, Recorder};
 use crate::{App, template};
 
 /// HA's `CONTEXT_RECENT_TIME_SECONDS`: state writes reuse the caller's context this long.
@@ -161,7 +162,7 @@ fn parse_step(v: &Value) -> Result<Step, String> {
 }
 
 /// Render every template in a value, as HA's `render_complex` (results parsed).
-fn render_complex(
+pub(crate) fn render_complex(
     states: &Arc<States>,
     v: &Value,
     vars: &Map<String, Value>,
@@ -193,7 +194,7 @@ fn render_complex(
 
 /// HA's `cv.positive_time_period`: seconds, `HH:MM[:SS[.f]]`, or `{days, hours, minutes,
 /// seconds, milliseconds}`.
-fn time_period(v: &Value) -> Result<f64, String> {
+pub(crate) fn time_period(v: &Value) -> Result<f64, String> {
     let bad = || format!("offset {v} should be format 'HH:MM', 'HH:MM:SS' or 'HH:MM:SS.F'");
     let secs = match v {
         Value::Number(n) => n.as_f64().ok_or_else(bad)?,
@@ -259,7 +260,7 @@ fn py_timedelta(secs: f64) -> String {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Mode {
+pub(crate) enum Mode {
     Single,
     Restart,
     Queued,
@@ -290,14 +291,23 @@ struct Runtime {
     last_triggered: Option<DateTime<Utc>>,
     last_action: Option<String>,
     context: Option<(Context, Instant)>,
+    /// An automation's on/off state (scripts are "on" while running instead).
+    enabled: bool,
 }
 
-/// A `script.*` entity (HA's `ScriptEntity`), or an unavailable one for an invalid config.
+/// A `script.*` entity (HA's `ScriptEntity`), or an `automation.*` one (HA's
+/// `AutomationEntity`, whose actions are a script), or an unavailable one for an invalid config.
 pub struct ScriptEntity {
+    pub(crate) domain: &'static str,
+    /// The script's key; an automation's object id. Names it in the log.
     key: String,
-    entity_id: String,
-    name: String,
-    raw: Value,
+    /// What its traces are stored under: the script's key, the automation's `id`.
+    pub(crate) item_id: String,
+    /// An automation's `id`, shown as the `id` attribute.
+    unique_id: Option<String>,
+    pub(crate) entity_id: String,
+    pub(crate) name: String,
+    pub(crate) raw: Value,
     /// Err: the config is invalid, the entity is unavailable.
     sequence: Result<Seq, String>,
     mode: Mode,
@@ -310,16 +320,35 @@ pub struct ScriptEntity {
 }
 
 impl ScriptEntity {
-    fn new(key: &str, raw: &Value, registry: &crate::registry::Registry) -> Self {
+    fn script(key: &str, raw: &Value, registry: &crate::registry::Registry) -> Self {
         let entity_id = registry
             .entity("script", "script", Some(key))
             .and_then(|e| e["entity_id"].as_str())
             .map_or_else(|| format!("script.{key}"), String::from);
-        let name = raw
-            .get("alias")
-            .and_then(Value::as_str)
-            .unwrap_or(key)
-            .to_string();
+        let name = raw.get("alias").and_then(Value::as_str).unwrap_or(key);
+        let sequence = raw.get("sequence").unwrap_or(&Value::Null);
+        Self::new(
+            "script",
+            (key, key, None),
+            entity_id,
+            name,
+            raw,
+            sequence,
+            Ok(()),
+        )
+    }
+
+    /// `ids`: (key, trace item id, unique id). `check`: the config's other parts (an
+    /// automation's triggers and conditions); an error makes the entity unavailable.
+    pub(crate) fn new(
+        domain: &'static str,
+        (key, item_id, unique_id): (&str, &str, Option<&str>),
+        entity_id: String,
+        name: &str,
+        raw: &Value,
+        sequence: &Value,
+        check: Result<(), String>,
+    ) -> Self {
         let mode = match raw.get("mode").and_then(Value::as_str).unwrap_or("single") {
             "restart" => Ok(Mode::Restart),
             "queued" => Ok(Mode::Queued),
@@ -329,16 +358,19 @@ impl ScriptEntity {
                 "value must be one of ['parallel', 'queued', 'restart', 'single'] for dictionary value @ data['mode']: {m}"
             )),
         };
-        let sequence = mode
-            .clone()
-            .and_then(|_| parse_sequence(raw.get("sequence").unwrap_or(&Value::Null)));
+        let sequence = check
+            .and(mode.clone())
+            .and_then(|_| parse_sequence(sequence));
         if let Err(e) = &sequence {
-            eprintln!("script {key}: invalid config, the script is unavailable: {e}");
+            eprintln!("{domain} {key}: invalid config, the {domain} is unavailable: {e}");
         }
         Self {
+            domain,
             key: key.into(),
+            item_id: item_id.into(),
+            unique_id: unique_id.map(String::from),
             entity_id,
-            name,
+            name: name.into(),
             raw: raw.clone(),
             sequence,
             mode: mode.unwrap_or(Mode::Single),
@@ -352,7 +384,10 @@ impl ScriptEntity {
                 .unwrap_or("WARNING")
                 .to_uppercase(),
             variables: raw.get("variables").and_then(Value::as_object).cloned(),
-            rt: Mutex::default(),
+            rt: Mutex::new(Runtime {
+                enabled: raw.get("initial_state").and_then(Value::as_bool) != Some(false),
+                ..Runtime::default()
+            }),
             queue: tokio::sync::Mutex::new(()),
         }
     }
@@ -361,10 +396,14 @@ impl ScriptEntity {
         matches!(self.mode, Mode::Queued | Mode::Parallel)
     }
 
-    /// Write the entity's state (HA's `async_write_ha_state` with `extra_state_attributes`).
-    fn write(&self, states: &States) {
+    /// Write the entity's state (HA's `async_write_ha_state` with `capability_attributes` and
+    /// `extra_state_attributes`).
+    pub(crate) fn write(&self, states: &States) {
         let mut rt = self.rt.lock().unwrap();
         let mut attrs = Map::new();
+        if let Some(id) = &self.unique_id {
+            attrs.insert("id".into(), id.clone().into());
+        }
         let state = if self.sequence.is_err() {
             "unavailable"
         } else {
@@ -374,10 +413,19 @@ impl ScriptEntity {
             if self.supports_max() {
                 attrs.insert("max".into(), self.max.into());
             }
-            if let Some(a) = &rt.last_action {
-                attrs.insert("last_action".into(), a.clone().into());
+            match (self.domain, &rt.last_action) {
+                ("automation", _) => {}
+                (_, Some(a)) => {
+                    attrs.insert("last_action".into(), a.clone().into());
+                }
+                _ => {}
             }
-            if rt.runs.is_empty() { "off" } else { "on" }
+            match self.domain {
+                "automation" if rt.enabled => "on",
+                "automation" => "off",
+                _ if rt.runs.is_empty() => "off",
+                _ => "on",
+            }
         };
         attrs.insert("friendly_name".into(), self.name.clone().into());
         if let Some(icon) = self.raw.get("icon") {
@@ -399,16 +447,47 @@ impl ScriptEntity {
         states.set(&self.entity_id, state, attrs, ctx);
     }
 
-    fn set_context(&self, ctx: &Context) {
+    pub(crate) fn set_context(&self, ctx: &Context) {
         self.rt.lock().unwrap().context = Some((ctx.clone(), Instant::now()));
     }
 
-    fn log(&self, level: &str, msg: &str) {
-        eprintln!("script.{} [{level}] {}: {msg}", self.key, self.name);
+    pub(crate) fn log(&self, level: &str, msg: &str) {
+        eprintln!(
+            "{}.{} [{level}] {}: {msg}",
+            self.domain, self.key, self.name
+        );
+    }
+
+    /// A valid config: the entity isn't unavailable.
+    pub(crate) fn available(&self) -> bool {
+        self.sequence.is_ok()
+    }
+
+    pub(crate) fn enabled(&self) -> bool {
+        self.rt.lock().unwrap().enabled
+    }
+
+    pub(crate) fn set_enabled(&self, on: bool) {
+        self.rt.lock().unwrap().enabled = on;
+    }
+
+    /// The config's `variables`, rendered into `vars` (HA's `ScriptVariables.async_render`).
+    // shortcut: each is rendered against the variables before it; HA's run variables also win
+    // over a script's defaults, which only matters when both set the same name.
+    pub(crate) fn render_variables(
+        &self,
+        states: &Arc<States>,
+        vars: &mut Map<String, Value>,
+    ) -> Result<(), String> {
+        for (k, v) in self.variables.iter().flatten() {
+            let r = render_complex(states, v, vars)?;
+            vars.insert(k.clone(), r);
+        }
+        Ok(())
     }
 
     /// Stop every run and wait for them (HA's `async_stop`).
-    async fn stop(&self) {
+    pub(crate) async fn stop(&self) {
         let waits: Vec<watch::Receiver<bool>> = {
             let rt = self.rt.lock().unwrap();
             rt.runs
@@ -429,11 +508,10 @@ impl ScriptEntity {
     }
 }
 
-/// All scripts, and the traces of their runs.
+/// All scripts.
 #[derive(Default)]
 pub struct Scripts {
     items: IndexMap<String, Arc<ScriptEntity>>,
-    pub traces: Traces,
 }
 
 impl Scripts {
@@ -445,17 +523,19 @@ impl Scripts {
     ) -> Self {
         let items: IndexMap<_, _> = config
             .iter()
-            .map(|(key, raw)| (key.clone(), Arc::new(ScriptEntity::new(key, raw, registry))))
+            .map(|(key, raw)| {
+                (
+                    key.clone(),
+                    Arc::new(ScriptEntity::script(key, raw, registry)),
+                )
+            })
             .collect();
         // shortcut: last_triggered isn't restored across restarts (HA's RestoreEntity reads
         // .storage/core.restore_state); add with the recorder step.
         for e in items.values() {
             e.write(states);
         }
-        Self {
-            items,
-            traces: Traces::default(),
-        }
+        Self { items }
     }
 
     /// The `script` domain of `get_services`: each script, then HA's four services.
@@ -523,7 +603,7 @@ pub async fn call_service(
         let vars = data.as_object().cloned().unwrap_or_default();
         let run_id = start(app, e.clone(), vars, ctx, true, stack).await;
         return Ok(Outcome {
-            child_run: run_id.map(|r| (e.key.clone(), r)),
+            child_run: run_id.map(|r| ("script", e.key.clone(), r)),
         });
     }
     if !matches!(service, "turn_on" | "turn_off" | "toggle") {
@@ -554,7 +634,7 @@ pub async fn call_service(
             "turn_on" => {
                 child = start(app, e.clone(), vars, ctx.clone(), false, stack.clone())
                     .await
-                    .map(|r| (e.key.clone(), r))
+                    .map(|r| ("script", e.key.clone(), r))
             }
             "turn_off" => {
                 e.set_context(&ctx);
@@ -571,16 +651,25 @@ pub async fn call_service(
                     stack.clone(),
                 )
                 .await
-                .map(|r| (e.key.clone(), r))
+                .map(|r| ("script", e.key.clone(), r))
             }
         }
     }
     Ok(Outcome { child_run: child })
 }
 
-/// Start a run (HA's `_async_start_run` and `Script.async_run`). `wait`: return when it
-/// finishes (`script.<key>`), else once it has started (`script.turn_on`). Returns the run's
-/// trace id, also for a run its mode refused.
+/// A run's variables: a script's are built when it starts (`this`, its `variables`, the
+/// caller's); an automation's arrive ready, built with its trigger before the conditions.
+pub(crate) enum Vars {
+    Run(Map<String, Value>),
+    Ready(Map<String, Value>),
+}
+
+type Started = Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>>;
+
+/// Start a script run (HA's `_async_start_run`). `wait`: return when it finishes
+/// (`script.<key>`), else once it has started (`script.turn_on`). Returns the run's trace id,
+/// also for a run its mode refused.
 fn start(
     app: &Arc<App>,
     entity: Arc<ScriptEntity>,
@@ -588,13 +677,28 @@ fn start(
     ctx: Context,
     wait: bool,
     stack: Vec<String>,
-) -> Pin<Box<dyn Future<Output = Option<String>> + Send + 'static>> {
+) -> Started {
+    let trace = app.traces.start(
+        entity.domain,
+        &entity.item_id,
+        entity.raw.clone(),
+        ctx.clone(),
+    );
+    launch(app, entity, trace, Vars::Run(run_vars), ctx, wait, stack)
+}
+
+/// Run the entity's sequence into `trace`, as its mode allows (HA's `Script.async_run`).
+pub(crate) fn launch(
+    app: &Arc<App>,
+    entity: Arc<ScriptEntity>,
+    trace: Recorder,
+    vars: Vars,
+    ctx: Context,
+    wait: bool,
+    stack: Vec<String>,
+) -> Started {
     let app = app.clone();
     Box::pin(async move {
-        let trace =
-            app.scripts
-                .traces
-                .start("script", &entity.key, entity.raw.clone(), ctx.clone());
         let run_id = trace.run_id();
         let refuse = |exec: &str, level: &str, msg: &str| {
             if entity.max_exceeded != "SILENT" {
@@ -617,37 +721,33 @@ fn start(
                 "Maximum number of runs exceeded",
             );
         }
-        if matches!(entity.mode, Mode::Restart | Mode::Queued) && stack.contains(&entity.key) {
-            entity.log("WARNING", &format!("Disallowed recursion detected, tried to start script.{} which is already running in the current execution path", entity.key));
+        if matches!(entity.mode, Mode::Restart | Mode::Queued) && stack.contains(&entity.entity_id)
+        {
+            entity.log("WARNING", &format!("Disallowed recursion detected, tried to start {} which is already running in the current execution path", entity.entity_id));
             trace.finish("disallowed_recursion_detected", None);
             return Some(run_id);
         }
 
-        // Variables: `this` (the state before the run), the script's own, the caller's, `context`.
-        let mut vars = Map::new();
-        vars.insert(
-            "this".into(),
-            app.states
-                .get(&entity.entity_id)
-                .map_or(Value::Null, |s| s.json()),
-        );
-        if let Some(defaults) = &entity.variables {
-            // shortcut: script-level variables are rendered once against `this`; HA also
-            // lets later ones read earlier ones, and run variables win.
-            for (k, v) in defaults {
-                match render_complex(&app.states, v, &vars) {
-                    Ok(r) => {
-                        vars.insert(k.clone(), r);
-                    }
-                    Err(e) => {
-                        entity.log("ERROR", &format!("Error rendering variables: {e}"));
-                        trace.finish("error", Some(e));
-                        return Some(run_id);
-                    }
+        // A script's variables: `this` (the state before the run), its own, the caller's.
+        let mut vars = match vars {
+            Vars::Ready(vars) => vars,
+            Vars::Run(run_vars) => {
+                let mut vars = Map::new();
+                vars.insert(
+                    "this".into(),
+                    app.states
+                        .get(&entity.entity_id)
+                        .map_or(Value::Null, |s| s.json()),
+                );
+                if let Err(e) = entity.render_variables(&app.states, &mut vars) {
+                    entity.log("ERROR", &format!("Error rendering variables: {e}"));
+                    trace.finish("error", Some(e));
+                    return Some(run_id);
                 }
+                vars.extend(run_vars);
+                vars
             }
-        }
-        vars.extend(run_vars);
+        };
         vars.insert("context".into(), ctx.json());
 
         let (stop_tx, stop_rx) = watch::channel(false);
@@ -682,7 +782,7 @@ fn start(
         let task = {
             let (app, entity) = (app.clone(), entity.clone());
             let mut stack = stack;
-            stack.push(entity.key.clone());
+            stack.push(entity.entity_id.clone());
             async move {
                 let _turn = if entity.mode == Mode::Queued {
                     Some(entity.queue.lock().await)
@@ -701,7 +801,12 @@ fn start(
                     stack,
                     levels: vec![],
                 };
-                let r = run.run_sequence(seq, "sequence".into(), &mut vars).await;
+                let base = if entity.domain == "automation" {
+                    "action"
+                } else {
+                    "sequence"
+                };
+                let r = run.run_sequence(seq, base.into(), &mut vars).await;
                 let (exec, err) = match r {
                     Ok(()) | Err(Halt::Stop) => ("finished", None),
                     Err(Halt::Abort(_)) | Err(Halt::ConditionFail) => ("aborted", None),
@@ -952,8 +1057,8 @@ impl Run {
                 )
                 .await
                 .map_err(|(_, m)| Halt::Error(m))?;
-                if let Some((item, run)) = out.child_run {
-                    self.trace.set_child(el, "script", &item, &run);
+                if let Some((domain, item, run)) = out.child_run {
+                    self.trace.set_child(el, domain, &item, &run);
                 }
                 Ok(())
             }
@@ -1074,12 +1179,12 @@ impl Step {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// The recording's volatile values as its placeholders, and numbers as JavaScript keeps them
     /// (the fixtures went through JSON.parse: `1.0` is `1`).
-    fn norm(v: &Value) -> Value {
+    pub(crate) fn norm(v: &Value) -> Value {
         match v {
             Value::String(s) => {
                 let hex32 = s.len() == 32
@@ -1122,7 +1227,7 @@ mod tests {
     }
 
     /// Every WS message of the automations recording, as (direction, message).
-    fn recording() -> Vec<(String, Value)> {
+    pub(crate) fn recording() -> Vec<(String, Value)> {
         include_str!("../../../compat/fixtures/automations/ws.jsonl")
             .lines()
             .map(|l| serde_json::from_str::<Value>(l).unwrap())
@@ -1233,14 +1338,14 @@ mod tests {
                 .1["result"]
                 .clone()
         };
-        let run = second.child_run.unwrap().1;
+        let run = second.child_run.unwrap().2;
         assert_eq!(
-            norm(&app.scripts.traces.get("script", "blink", &run).unwrap()),
+            norm(&app.traces.get("script", "blink", &run).unwrap()),
             reply("trace/get"),
             "trace/get"
         );
         assert_eq!(
-            norm(&json!(app.scripts.traces.list("script", Some("blink")))),
+            norm(&json!(app.traces.list("script", Some("blink")))),
             reply("trace/list"),
             "trace/list"
         );
@@ -1263,9 +1368,9 @@ mod tests {
             .unwrap()
             .child_run
             .unwrap()
-            .1;
+            .2;
         assert_eq!(
-            app.scripts.traces.get("script", "blink", &refused).unwrap()["script_execution"],
+            app.traces.get("script", "blink", &refused).unwrap()["script_execution"],
             "failed_single"
         );
         a.await.unwrap().unwrap();
@@ -1295,9 +1400,8 @@ mod tests {
             .await
             .unwrap();
         let t = app
-            .scripts
             .traces
-            .get("script", "blink", &started.child_run.unwrap().1)
+            .get("script", "blink", &started.child_run.unwrap().2)
             .unwrap();
         assert_eq!(t["script_execution"], "cancelled");
         assert_eq!(

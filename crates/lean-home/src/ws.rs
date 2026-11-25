@@ -331,9 +331,10 @@ impl Conn {
                     msg["service"].as_str().unwrap_or_default(),
                 );
                 let ctx = crate::state::Context::new(Some(self.user.id.clone()));
-                if domain == "script" {
-                    // A script runs for a while (`script.blink` waits for it to finish): answer
-                    // when it's done and keep serving this connection meanwhile, as HA does.
+                if domain == "script" || domain == "automation" {
+                    // A script runs for a while (`script.blink` and `automation.trigger` wait for
+                    // the run to finish): answer when it's done and keep serving this connection
+                    // meanwhile, as HA does.
                     let (app, later) = (app.clone(), self.later.clone());
                     let (domain, service) = (domain.to_string(), service.to_string());
                     let (data, target) = (msg["service_data"].clone(), msg["target"].clone());
@@ -369,11 +370,7 @@ impl Conn {
             }
             "trace/list" => {
                 let domain = msg["domain"].as_str().unwrap_or_default();
-                ok(app
-                    .scripts
-                    .traces
-                    .list(domain, msg["item_id"].as_str())
-                    .into())
+                ok(app.traces.list(domain, msg["item_id"].as_str()).into())
             }
             "trace/get" => {
                 let (d, i, r) = (
@@ -382,7 +379,7 @@ impl Conn {
                     msg["run_id"].as_str(),
                 );
                 match (d, i, r) {
-                    (Some(d), Some(i), Some(r)) => match app.scripts.traces.get(d, i, r) {
+                    (Some(d), Some(i), Some(r)) => match app.traces.get(d, i, r) {
                         Some(t) => ok(t),
                         None => vec![error(id, "not_found", "The trace could not be found")],
                     },
