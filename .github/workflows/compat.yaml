@@ -1,12 +1,11 @@
 name: Compat
 
 on:
-  # Docs-only changes can't affect the build or the replay.
+  # No paths-ignore: `replay` is a required check, and a workflow that never runs blocks the merge.
+  # Docs-only changes skip the replay in the job instead (a skipped job counts as passed).
   pull_request:
-    paths-ignore: ["docs/**", "**.md"]
   push:
     branches: [main]
-    paths-ignore: ["docs/**", "**.md"]
 
 permissions:
   contents: read
@@ -19,8 +18,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      # Docs-only changes can't affect the build or the replay. A failing git diff fails the job (bash -e).
+      - id: diff
+        run: |
+          files=$(git diff --name-only "${{ github.event.pull_request.base.sha || github.event.before }}" HEAD)
+          if grep -qvE '^docs/|\.md$' <<< "$files"; then echo code=true >> "$GITHUB_OUTPUT"; fi
+
   # Replay the recorded HA sessions (compat/fixtures) against lean-home and diff the results.
   replay:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       FRONTEND: ${{ github.workspace }}/bench/.work/venv/lib/python3/site-packages/hass_frontend
