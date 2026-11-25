@@ -18,7 +18,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  changes:
+  compat-changes:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.diff.outputs.code }}
@@ -34,8 +34,8 @@ jobs:
 
   # Replay the recorded HA sessions (compat/fixtures) against lean-home and diff the results.
   replay:
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: compat-changes
+    if: needs.compat-changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       FRONTEND: ${{ github.workspace }}/bench/.work/venv/lib/python3/site-packages/hass_frontend
