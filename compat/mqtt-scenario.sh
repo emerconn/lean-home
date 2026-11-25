@@ -55,3 +55,26 @@ EOF
 
 # mqtt.tsv (from mqtt_logger) -> mqtt.jsonl. usage: mqtt_jsonl < tsv > jsonl
 mqtt_jsonl() { jq -cR 'split("\t") | {topic: .[2], payload: (.[3:] | join("\t")), retain: (.[0] == "1"), qos: (.[1] | tonumber)}'; }
+
+# The automations scenario's browser steps, on the same devices plus compat/automations/*.yaml:
+# a live template, automations firing from state and MQTT triggers, a script with delay and
+# choose, then the frontend's automation, trace and script pages.
+automations_steps() {
+  local T="{{ states('sensor.demo_device_temperature') }}|{{ is_state('binary_sensor.demo_device_front_door', 'on') }}|{{ state_attr('light.demo_device_ceiling', 'brightness') }}|{{ states('sensor.missing') | float(0) }}|{{ iif(is_state('switch.demo_device_fan', 'on'), 'fan', 'still') }}"
+  cat <<EOF
+[{"sub": {"type": "render_template", "template": $(jq -Rn --arg t "$T" '$t')}},
+ {"call": ["switch", "turn_on", {"entity_id": "switch.demo_device_fan"}]},
+ {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -t lh/button -m press"},
+ {"call": ["switch", "turn_off", {"entity_id": "switch.demo_device_fan"}]},
+ {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -r -t lh/door/state -m ON"},
+ {"call": ["automation", "trigger", {"entity_id": "automation.fan_lights_ceiling", "skip_condition": false}]},
+ {"call": ["script", "blink", {"target_light": "light.demo_device_ceiling"}]},
+ {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -r -t lh/sensor1/state -m '{\"temperature\":22.0}'"},
+ {"call": ["automation", "turn_off", {"entity_id": "automation.nightly_off"}]},
+ {"nav": "/config/automation/dashboard"},
+ {"nav": "/config/automation/edit/1700000000001"},
+ {"nav": "/config/automation/trace/1700000000001"},
+ {"nav": "/config/script/dashboard"},
+ {"nav": "/config/script/edit/blink"}]
+EOF
+}

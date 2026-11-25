@@ -29,7 +29,23 @@ device goes offline (`lh/status` → `offline`).
   `.storage` files HA wrote, which lean-home must read.
 
 Re-record with `compat/capture-mqtt.sh` (same requirements; temp files and the broker log go to
-`bench/.work/capture-mqtt`).
+`bench/.work/capture-mqtt-discovery`).
+
+## Automations, scripts and templates
+
+`fixtures/automations/` is the MQTT setup above plus the automations and script in
+`compat/automations/` (copied into HA's config): a state trigger with a state condition, an MQTT
+trigger that runs a script with a field, and a time trigger at 03:00 with a template condition, which
+never fires during the recording (its entity, config and `automation.turn_off` still are). The
+script turns a light on, waits 1 s and `choose`s by the fan's state. The browser opens a
+`render_template` subscription (`states()`, `is_state`, `state_attr`, `float(0)`, `iif`) that stays
+open while the steps run: fan on (fires the state automation), an MQTT button press (fires the
+script), fan off, door open, `automation.trigger` (now blocked by its condition), `script.blink`
+(takes the `default` branch). Then it opens the automation list, editor and trace pages and the
+script list and editor. Same files as `mqtt-discovery`.
+
+Re-record with `compat/capture-mqtt.sh automations`. Two recordings differ only in set-ordered data,
+e.g. `render_template`'s `listeners.entities`. Not in CI yet: lean-home doesn't run automations.
 
 ## Replay and compare
 

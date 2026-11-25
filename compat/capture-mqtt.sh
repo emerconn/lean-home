@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Record real HA with MQTT discovery (Mosquitto, five discovered entities on one device) into
-# compat/fixtures/mqtt-discovery/: the frontend's traffic, every MQTT message, HA's subscriptions,
+# compat/fixtures/<scenario>/: the frontend's traffic, every MQTT message, HA's subscriptions,
 # and the .storage files HA wrote. Needs docker, curl, jq, node and /usr/bin/chromium.
+#   usage: compat/capture-mqtt.sh [mqtt-discovery|automations]
+# automations adds compat/automations/*.yaml to HA's config and runs automations_steps.
 set -euo pipefail
-ROOT=$(cd "$(dirname "$0")/.." && pwd); WORK=$ROOT/bench/.work/capture-mqtt
+SCENARIO=${1:-mqtt-discovery}
+case $SCENARIO in mqtt-discovery|automations) ;; *) echo "unknown scenario $SCENARIO" >&2; exit 2 ;; esac
+ROOT=$(cd "$(dirname "$0")/.." && pwd); WORK=$ROOT/bench/.work/capture-$SCENARIO
 IMG=ghcr.io/home-assistant/home-assistant:${HA_VER:-2026.11.2}; MQTT_IMG=eclipse-mosquitto:2
-PORT=${PORT:-18123}; URL=http://127.0.0.1:$PORT; OUT=$ROOT/compat/fixtures/mqtt-discovery
+PORT=${PORT:-18123}; URL=http://127.0.0.1:$PORT; OUT=$ROOT/compat/fixtures/$SCENARIO
 NET=lh-mqtt; HA=lh-mqtt-ha; MQ=lh-mosq
 
 cleanup() { docker rm -f "$HA" "$MQ" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; }
@@ -14,6 +18,7 @@ cleanup
 mkdir -p "$WORK"; docker run --rm -v "$WORK:/w" --entrypoint rm "$IMG" -rf /w/config /w/mosquitto
 mkdir -p "$WORK/config" "$WORK/mosquitto" "$OUT"
 echo "default_config:" > "$WORK/config/configuration.yaml"
+[ "$SCENARIO" = automations ] && cp "$ROOT"/compat/automations/*.yaml "$WORK/config/"
 cat > "$WORK/mosquitto/mosquitto.conf" <<'EOF'
 listener 1883
 allow_anonymous true
@@ -53,7 +58,7 @@ result=$(curl -s "${H[@]}" "$URL/api/config/config_entries/flow/$flow" -d "{\"br
 [ "$(jq -r .type <<< "$result")" = create_entry ] || { echo "mqtt config flow failed: $result" >&2; exit 1; }
 sleep 5
 
-STEPS=$(mqtt_steps)
+STEPS=$( [ "$SCENARIO" = automations ] && automations_steps || mqtt_steps )
 STEPS=$STEPS NODE_PATH=$ROOT/bench/.work/node/node_modules node "$ROOT/compat/capture.mjs" "$URL" "$OUT"
 rm -f "$OUT/index.html" # same page as frontend-load
 
