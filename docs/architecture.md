@@ -158,7 +158,7 @@ device-based discovery, plain TCP and TLS). CI replays the recorded HA sessions 
 Same method as steps 0 and 1: record real HA first, build against the recording, add the scenario
 to the CI replay.
 
-1. **Record.** A `compat/capture-automations.sh` scenario: a few automations and scripts in YAML
+1. **Record.** (Done: `compat/capture-mqtt.sh automations`, `compat/fixtures/automations/`.) A scenario: a few automations and scripts in YAML
    (state, time and MQTT triggers; conditions; service calls, delays, `choose`), the frontend's
    automation and script pages, and template rendering (`render_template` with `states()`).
 2. **Templates.** HA's globals and filters on minijinja: `states()`, `is_state`, `state_attr`,

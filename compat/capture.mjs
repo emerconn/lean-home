@@ -8,7 +8,8 @@ const puppeteer = createRequire(process.env.NODE_PATH + "/")("puppeteer-core");
 const [url, out] = process.argv.slice(2);
 const norm = (s) => normFor(s, url);
 // Run after the dashboard loads, 3 s apart: {"call": [domain, service, data]} goes through the
-// frontend's own connection, {"sh": "cmd"} runs on the host (e.g. a device going offline).
+// frontend's own connection, {"sh": "cmd"} runs on the host (e.g. a device going offline),
+// {"sub": msg} opens a WS subscription, {"nav": "/path"} opens a frontend page.
 const steps = JSON.parse(process.env.STEPS ||'[{"call": ["light", "toggle", {"entity_id": "light.kitchen"}]}]');
 // The frontend posts /auth/token as multipart; keep only the fields.
 const form = (s) => Object.fromEntries([...s.matchAll(/name="([^"]+)"\r\n\r\n([^\r]*)/g)].map((m) => [m[1], m[2]]));
@@ -44,6 +45,10 @@ await page.waitForSelector("pierce/hui-view", { timeout: 60000 });
 await new Promise((r) => setTimeout(r, 5000));
 for (const step of steps) {
   if (step.sh) execSync(step.sh, { stdio: "inherit" });
+  // A subscription (e.g. render_template) that stays open, so later updates are recorded too.
+  else if (step.sub) await page.evaluate((m) => { document.querySelector("home-assistant").hass.connection.subscribeMessage(() => {}, m); }, step.sub);
+  // In-app navigation, as the frontend's navigate() does it; a reload would log out.
+  else if (step.nav) await page.evaluate((p) => { history.pushState(null, "", p); window.dispatchEvent(new CustomEvent("location-changed")); }, step.nav);
   else await page.evaluate((c) => document.querySelector("home-assistant").hass.callService(...c), step.call);
   await new Promise((r) => setTimeout(r, 3000));
 }
