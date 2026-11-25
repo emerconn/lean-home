@@ -28,7 +28,8 @@ case $SCENARIO in
     docker rm -f "$MQ" >/dev/null 2>&1 || true
     docker run -d --name "$MQ" -p "127.0.0.1:$MQTT_PORT:1883" -v "$OUT/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" "$MOSQUITTO_IMAGE" >/dev/null
     sleep 1
-    mqtt_logger > "$OUT/mqtt.tsv" &
+    export MQTT_LOG=$OUT/mqtt.tsv # capture.mjs waits for it to go quiet too
+    mqtt_logger > "$MQTT_LOG" &
     mqtt_responder &
     sleep 1
     mqtt_devices

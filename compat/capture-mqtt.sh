@@ -61,7 +61,7 @@ result=$(curl -s "${H[@]}" "$URL/api/config/config_entries/flow/$flow" -d "{\"br
 sleep 5
 
 STEPS=$( [ "$SCENARIO" = automations ] && automations_steps || mqtt_steps )
-STEPS=$STEPS NODE_PATH=$ROOT/bench/.work/node/node_modules node "$ROOT/compat/capture.mjs" "$URL" "$OUT"
+MQTT_LOG=$WORK/mqtt.tsv STEPS=$STEPS NODE_PATH=$ROOT/bench/.work/node/node_modules node "$ROOT/compat/capture.mjs" "$URL" "$OUT"
 rm -f "$OUT/index.html" # same page as frontend-load
 
 # Stopping HA flushes its delayed .storage writes.

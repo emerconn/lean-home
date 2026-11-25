@@ -40,7 +40,8 @@ mqtt_devices() {
 }
 
 # The browser steps (capture.mjs STEPS): commands through the frontend, then the device changes
-# and goes offline.
+# and goes offline. The sleep keeps the offline write over 5 s after the last service call: HA reuses a
+# call's context that long (CONTEXT_RECENT_TIME_SECONDS), and the recording has a fresh one there.
 mqtt_steps() {
   cat <<EOF
 [{"call": ["light", "toggle", {"entity_id": "light.demo_device_ceiling"}]},
@@ -49,6 +50,7 @@ mqtt_steps() {
  {"call": ["switch", "toggle", {"entity_id": "switch.demo_device_fan"}]},
  {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -r -t lh/sensor1/state -m '{\"temperature\":22.0}'"},
  {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -r -t lh/door/state -m ON"},
+ {"sh": "sleep 5"},
  {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -r -t lh/status -m offline"}]
 EOF
 }
