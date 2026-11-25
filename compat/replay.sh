@@ -12,7 +12,8 @@ PORT=${PORT:-18200}; URL=http://127.0.0.1:$PORT
 MQ=lh-replay-mosq; MQTT_PORT=${MQTT_PORT:-18201}
 rm -rf "$OUT"; mkdir -p "$OUT"
 
-(cd "$ROOT" && cargo build --release --locked -q)
+# Debug build: the replay workload is tiny, and the optimised release build costs CI time.
+(cd "$ROOT" && cargo build --locked -q)
 
 cleanup() { kill $(jobs -p) 2>/dev/null || true; docker rm -f "$MQ" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -39,7 +40,7 @@ case $SCENARIO in
   *) echo "unknown scenario $SCENARIO" >&2; exit 2 ;;
 esac
 
-"$ROOT/target/release/lean-home" --config "$OUT/config" --frontend "$FRONTEND" --listen "127.0.0.1:$PORT" "${args[@]}" > "$OUT/server.log" 2>&1 &
+"$ROOT/target/debug/lean-home" --config "$OUT/config" --frontend "$FRONTEND" --listen "127.0.0.1:$PORT" "${args[@]}" > "$OUT/server.log" 2>&1 &
 LH=$!
 for _ in $(seq 50); do curl -sf "$URL/manifest.json" >/dev/null && break; sleep 0.2; done
 curl -sf "$URL/manifest.json" >/dev/null || { echo "lean-home did not start:" >&2; cat "$OUT/server.log" >&2; exit 1; }
