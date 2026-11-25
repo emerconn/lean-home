@@ -215,11 +215,55 @@ to the CI replay.
      line (`WARNING` when rendered, `ERROR` before an `UndefinedError`). lean-home now does the
      same, checked message for message against the recording (`ws.rs` tests).
 
-   Then: triggers (state, time, MQTT first), conditions, actions; the `automation.*`/`script.*`
-   entities and services; the WebSocket commands the editor uses. Add the template helpers
-   automations need from "Deferred" below.
+   - **Conditions, actions and scripts.** (Done: `condition.rs`, `script.rs`, `trace.rs`.)
+     Conditions `state`, `numeric_state`, `template`, `and`/`or`/`not` and their shorthands;
+     actions: service calls (templated `action`, `data`, `target`), `delay`, `choose`, `if`,
+     `condition`, `variables`, `stop`, with `enabled` and `continue_on_error`; script modes
+     `single`/`restart`/`queued`/`parallel` with `max` and HA's refusals; the `script.*`
+     entities (`last_triggered`, `mode`, `current`, `max`, `last_action`, HA's 5 s context
+     reuse) and services (`script.<key>` waits, `turn_on` with `variables` doesn't, `turn_off`,
+     `toggle`, and `get_services` with HA's field and selector defaults). Runs are traced as
+     they execute, HA's way (elements by config path, changed variables, results, errors,
+     `child_id` links to called scripts, the last 5 runs per script), and served by
+     `trace/list` and `trace/get`. A script call over the WebSocket is answered when the run
+     ends while the connection keeps serving, as in HA. Checked against the recording (which
+     now opens the script's trace page): replaying `script.blink`'s two runs gives HA's state
+     changes, `trace/get` and `trace/list` exactly. Measured (`bench/bench.sh`): anon memory
+     idle unchanged at 0.6 MiB; 0.85 MiB after 20 runs with 5 traces stored and a WebSocket
+     session open; stripped binary +334 KiB (6.79 → 7.14 MB).
+   - **Next: triggers and automations** (state, time, MQTT; the `automation.*` entities and
+     services, automation traces), then the editor's commands. Add the template helpers and
+     actions automations need from "Deferred" below.
 
 Measure memory and binary size before and after, as for steps 0 and 1.
+
+### What's left in step 2
+
+In order; each is its own PR, branched from `main` after the previous one merges.
+
+1. **Triggers and automations.** State triggers (`to`/`from`/`attribute`, and `for:`, which
+   also unlocks the `state` condition's `for:`), MQTT triggers, time triggers (tested with
+   a paused clock: the recording's 03:00 trigger never fires); the `trigger` condition; the
+   `automation.*` entities (`id`, `last_triggered`, `mode`, `current`) and services
+   (`turn_on`/`turn_off`/`toggle`, `trigger` with `skip_condition`); automation runs
+   reuse `script.rs` (actions are a script sequence) with a new context whose `parent_id` is
+   the trigger's, and are traced with `trigger/0` and `condition/0` elements and
+   `failed_conditions` (the recording's `trace/list` and `trace/get` for automation
+   `1700000000001` are the reference). Done when the `automations` scenario's state changes
+   and MQTT messages come out as recorded, so the scenario can join the CI replay
+   (`compat/replay.sh`, `compat/compare.py`, `.github/workflows/compat.yaml`; `compare.py` needs
+   `render_template`'s `listeners.entities` compared unordered).
+2. **The automation and script editors.** The REST and WebSocket commands the editor pages
+   send (in `compat/fixtures/automations`: `config/automation/config/<id>`,
+   `config/script/config/<key>`, `search/related`, `trace/contexts`…). Saving writes
+   `automations.yaml`/`scripts.yaml`: the first time lean-home writes a user's config file,
+   so write atomically and keep a backup.
+3. **Packages** (`homeassistant: packages:`), so automations defined in them load.
+4. **Upgrade to HA 2026.11.3** with the checklist in [compatibility](compatibility.md): Renovate
+   opens that PR on its Monday run and it stays red until the fixtures are re-recorded.
+
+Also open, not step 2: release-plz's PR #9 (`chore: release v0.0.0`) is waiting for a
+decision on starting releases.
 
 ### When it should run on the router: a container image
 
@@ -252,6 +296,9 @@ Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the
 |---|---|---|
 | HA template helpers not built yet, by HA test cases that need them (`ha_template_cases` prints the full list): datetime (`strptime` 26, `timedelta`/`as_timedelta`/`timedelta_string` 30, `relative_time`/`time_since`/`time_until` 30, `today_at`, `as_local`, `timestamp_*`), math (`average`, `median`, `statistical_mode`, `log`, trig, bitwise, `clamp`, `min`/`max` as globals), state (`expand` 12, `closest`/`distance` 23, `state_translated`/`state_attr_translated` 16, `integration_entities`), regex (24), collections (`flatten`, `combine`, `union`/`intersect`/`difference`…), areas/devices/floors/labels (~70), strings (`slugify`, `ordinal`, `wrap`), `typeof`, hashes, base64, `version`, issues | With 2.4, by what automations use; regenerate the count with the corpus | Each is small and has HA's cases waiting in the corpus: add it to `IMPLEMENTED` in `template_ha_cases.rs` and the cases start being compared |
 | Undefined-variable warnings name the first undefined variable only, and none for a missing attribute of a defined variable or an `if`/`for` over an undefined (HA warns there too) | When the template editor shows a wrong warning | Errors and results are right; only the `report_errors` log text can differ |
+| Script actions not built yet: `wait_template`, `wait_for_trigger`, `repeat`, `parallel`, `sequence`, `event`, `scene`, device actions, service responses (`response_variable`). A script using one is unavailable, with the error in the log | `wait_for_trigger` with triggers (2.4); the rest by what configs use | `wait_*` need the trigger and template listeners; the others are each small |
+| Conditions not built yet: `time`, `sun`, `zone`, `device`, `trigger`, and `for:` on `state` | `trigger` and `for:` with automations (2.4); the rest by demand | `trigger` needs the automation's trigger data, `for:` the clock |
+| Script details: `script.reload` (restart instead), `last_triggered` and traces aren't kept across restarts (HA's `core.restore_state`, `trace.saved_traces`), field defaults and non-entity selector defaults in `get_services`, branch-local variables (HA lets a branch update an outer variable), `continue_on_error` skipping every error (HA stops on configuration errors) | Restore with the recorder step; reload with config reloading; the rest when a config needs it | Running and tracing are right; these are the edges |
 | Template re-render rate limits after an error (HA waits up to 60 s before re-rendering a failed template) | With the rate limit row below | lean-home retries on the next matching change |
 | `render_template` has no rate limit (HA: 1/s for domain listeners, 1/min for all states) | If a dashboard iterating all states proves costly | Re-rendering on every change is correct, only more work |
 | Registries are read-only: new MQTT entities aren't written to `core.entity_registry` (HA later picks the same ids, normally) | Step 5 | Needed once lean-home renames entities or assigns areas itself, i.e. with config flows; writing HA's file needs care not to corrupt it |

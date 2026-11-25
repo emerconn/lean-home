@@ -59,7 +59,7 @@ mqtt_jsonl() { jq -cR 'split("\t") | {topic: .[2], payload: (.[3:] | join("\t"))
 # The automations scenario's browser steps, on the same devices plus compat/automations/*.yaml:
 # a live template, failing ones (errors with and without report_errors, strict mode) and one that renders with
 # an undefined variable, automations firing from state and MQTT triggers, a script with delay and
-# choose, then the frontend's automation, trace and script pages.
+# choose, then the frontend's automation, trace and script pages (with the script's traces).
 automations_steps() {
   local T="{{ states('sensor.demo_device_temperature') }}|{{ is_state('binary_sensor.demo_device_front_door', 'on') }}|{{ state_attr('light.demo_device_ceiling', 'brightness') }}|{{ states('sensor.missing') | float(0) }}|{{ iif(is_state('switch.demo_device_fan', 'on'), 'fan', 'still') }}"
   cat <<EOF
@@ -81,6 +81,7 @@ automations_steps() {
  {"nav": "/config/automation/edit/1700000000001"},
  {"nav": "/config/automation/trace/1700000000001"},
  {"nav": "/config/script/dashboard"},
- {"nav": "/config/script/edit/blink"}]
+ {"nav": "/config/script/edit/blink"},
+ {"nav": "/config/script/trace/blink"}]
 EOF
 }

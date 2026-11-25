@@ -32,11 +32,11 @@ impl Registry {
         })
     }
 
-    /// The registry entry HA keys by (domain, platform "mqtt", unique_id).
-    pub fn mqtt_entity(&self, domain: &str, unique_id: Option<&str>) -> Option<&Value> {
+    /// The registry entry HA keys by (domain, platform, unique_id).
+    pub fn entity(&self, platform: &str, domain: &str, unique_id: Option<&str>) -> Option<&Value> {
         let uid = unique_id?;
         self.entities.iter().find(|e| {
-            e["platform"] == "mqtt"
+            e["platform"] == platform
                 && e["unique_id"] == uid
                 && e["entity_id"]
                     .as_str()

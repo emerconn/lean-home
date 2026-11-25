@@ -1,7 +1,10 @@
 //! Services and the demo entities that roadmap step 0 calls for. Real integrations replace the demo.
 
+use std::sync::Arc;
+
 use serde_json::{Map, Value, json};
 
+use crate::App;
 use crate::state::{Context, States};
 
 const TOGGLEABLE: [&str; 2] = ["light", "switch"];
@@ -35,8 +38,8 @@ fn light_attrs(state: &str) -> Map<String, Value> {
     )
 }
 
-/// `get_services`: `{domain: {service: description}}`
-pub fn describe() -> Value {
+/// `get_services`: `{domain: {service: description}}`, with the scripts' services.
+pub fn describe(app: &App) -> Value {
     let mut out = Map::new();
     for domain in TOGGLEABLE.iter().chain(&["homeassistant"]) {
         let target = if *domain == "homeassistant" {
@@ -50,7 +53,49 @@ pub fn describe() -> Value {
             .collect();
         out.insert(domain.to_string(), services.into());
     }
+    out.insert("script".into(), app.scripts.describe());
     out.into()
+}
+
+/// What a service call started, for the caller's trace: a script run as (item id, run id).
+#[derive(Debug, Default)]
+pub struct Outcome {
+    pub child_run: Option<(String, String)>,
+}
+
+/// Any service call, from the WebSocket or a script step. `stack` is the chain of scripts this
+/// call comes from (HA's `script_stack_cv`), to refuse a recursion that would deadlock.
+pub async fn dispatch(
+    app: &Arc<App>,
+    domain: &str,
+    service: &str,
+    data: Value,
+    target: Value,
+    ctx: Context,
+    stack: Vec<String>,
+) -> Result<Outcome, (&'static str, String)> {
+    if domain == "script" {
+        return crate::script::call_service(app, service, data, target, ctx, stack).await;
+    }
+    call_sync(app, domain, service, &data, &target, ctx).map(|_| Outcome::default())
+}
+
+/// The services that finish synchronously: the WebSocket calls these inline, so the state
+/// changes they cause go out before their result.
+pub fn call_sync(
+    app: &App,
+    domain: &str,
+    service: &str,
+    data: &Value,
+    target: &Value,
+    ctx: Context,
+) -> Result<Context, (&'static str, String)> {
+    let owner = |entity_id: &str, ctx: &Context| {
+        app.mqtt
+            .get()
+            .is_some_and(|m| m.call(app, entity_id, service, data, ctx))
+    };
+    call(&app.states, &owner, domain, service, data, target, ctx)
 }
 
 /// An integration's handler for one entity: `true` if it owns (and handled) the entity.
@@ -64,7 +109,7 @@ pub fn call(
     service: &str,
     data: &Value,
     target: &Value,
-    user_id: &str,
+    ctx: Context,
 ) -> Result<Context, (&'static str, String)> {
     if (domain, service) == ("system_log", "write") {
         // The frontend reports its own errors here; HA logs them, so do we.
@@ -73,7 +118,7 @@ pub fn call(
             data["logger"].as_str().unwrap_or("frontend"),
             data["message"].as_str().unwrap_or_default()
         );
-        return Ok(Context::new(Some(user_id.into())));
+        return Ok(ctx);
     }
     if !(TOGGLEABLE.contains(&domain) || domain == "homeassistant") || !ACTIONS.contains(&service) {
         return Err((
@@ -84,7 +129,6 @@ pub fn call(
     let ids = entity_ids(&data["entity_id"])
         .into_iter()
         .chain(entity_ids(&target["entity_id"]));
-    let ctx = Context::new(Some(user_id.into()));
     let all = states.all();
     for id in ids {
         // shortcut: only "all" and explicit ids; device/area/label targets need the registries (later step).
@@ -151,7 +195,7 @@ mod tests {
             "toggle",
             &json!({"entity_id": "light.kitchen"}),
             &Value::Null,
-            "u",
+            Context::new(Some("u".into())),
         )
         .unwrap();
         let st = s.get("light.kitchen").unwrap();
@@ -165,7 +209,7 @@ mod tests {
             "turn_on",
             &Value::Null,
             &json!({"entity_id": ["switch.fan"]}),
-            "u",
+            Context::new(Some("u".into())),
         )
         .unwrap();
         call(
@@ -175,7 +219,7 @@ mod tests {
             "turn_off",
             &json!({"entity_id": "switch.fan"}),
             &Value::Null,
-            "u",
+            Context::new(Some("u".into())),
         )
         .unwrap();
         assert_eq!(s.get("switch.fan").unwrap().state, "on");
@@ -186,7 +230,7 @@ mod tests {
             "turn_off",
             &json!({"entity_id": "switch.fan, light.kitchen"}),
             &Value::Null,
-            "u",
+            Context::new(Some("u".into())),
         )
         .unwrap();
         assert_eq!(s.get("switch.fan").unwrap().state, "off");
@@ -199,7 +243,7 @@ mod tests {
                 "explode",
                 &Value::Null,
                 &Value::Null,
-                "u"
+                Context::new(Some("u".into()))
             )
             .unwrap_err()
             .0,

@@ -56,6 +56,9 @@ Paths are in the HA Core repository (`github.com/home-assistant/core`), at the `
 | `state.rs` | `homeassistant/core.py` (`State`, `Event`), `components/websocket_api/messages.py` (compressed states and diffs) |
 | `registry.rs` | `helpers/entity_registry.py`, `helpers/device_registry.py` (storage formats) |
 | `services.rs` | `components/light/services.yaml` and the switch equivalents |
+| `condition.rs` | `helpers/condition/` (`__init__.py`, `conditions.py`, `tracing.py`) |
+| `script.rs` | `helpers/script.py` (runs, modes, steps), `components/script/{entity,services,config}.py` |
+| `trace.rs` | `helpers/trace.py`, `components/trace/{models,websocket_api}.py` |
 | `template.rs` | `helpers/template/` (the package and its `extensions/`), `helpers/event.py` (`TrackTemplateResultInfo`), `handle_render_template` in `components/websocket_api/commands.py` |
 | `config.rs` | annotatedyaml `loader.py` and `constructors.py` (not in HA Core; in the image); PyYAML's resolver; `core_config.py` (core config, units); `config.py` (`extract_domain_configs`); `util/unit_system.py` |
 | `mqtt/abbreviations.rs` | `components/mqtt/abbreviations.py`. Says "regenerate", but there is no generator script yet: update it by hand from the diff |
