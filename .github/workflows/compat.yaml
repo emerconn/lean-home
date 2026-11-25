@@ -70,3 +70,9 @@ jobs:
       - run: compat/compare.py frontend-load compat/fixtures/frontend-load bench/.work/replay/frontend-load
       - run: compat/replay.sh mqtt-discovery
       - run: compat/compare.py mqtt-discovery compat/fixtures/mqtt-discovery bench/.work/replay/mqtt-discovery
+      # On failure: lean-home's server.log, the browser's failure.log and failure.png, what was recorded so far.
+      - if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: compat-replay
+          path: bench/.work/replay/
