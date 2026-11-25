@@ -3,14 +3,26 @@
 //! `render_template` re-renders on.
 
 use std::fmt::Write as _;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use minijinja::value::{Enumerator, Kwargs, Object, ObjectRepr, Rest, Value};
 use minijinja::{Environment, Error, ErrorKind, State as Vm, UndefinedBehavior};
 use serde_json::json;
 
+use crate::config::Zone;
 use crate::state::{self, States};
+
+/// The configured time zone, process-wide like HA's `dt_util.DEFAULT_TIME_ZONE`.
+static TIME_ZONE: RwLock<Option<Zone>> = RwLock::new(None);
+
+pub fn set_time_zone(tz: Zone) {
+    *TIME_ZONE.write().unwrap() = Some(tz);
+}
+
+fn local_tz() -> Zone {
+    TIME_ZONE.read().unwrap().clone().unwrap_or_else(Zone::utc)
+}
 
 /// What a render read, so it can be re-rendered when that changes (HA's `RenderInfo`).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -568,8 +580,8 @@ impl Object for TemplateState {
         Some(match key {
             "state" => Value::from(s.state.as_str()),
             "attributes" => ser(&s.attributes),
-            "last_changed" => Value::from_object(Dt(s.last_changed)),
-            "last_updated" | "last_reported" => Value::from_object(Dt(s.last_updated)),
+            "last_changed" => Value::from_object(Dt::utc(s.last_changed)),
+            "last_updated" | "last_reported" => Value::from_object(Dt::utc(s.last_updated)),
             "context" => ser(s.context.json()),
             "domain" => Value::from(domain),
             "object_id" => Value::from(object_id),
@@ -611,9 +623,26 @@ impl Object for TemplateState {
     }
 }
 
-/// A Python `datetime` (UTC, the only time zone lean-home reports).
+/// A time-zone-aware Python `datetime`: UTC for state times, local for `now()`, as in HA.
 #[derive(Debug)]
-struct Dt(DateTime<Utc>);
+struct Dt(DateTime<FixedOffset>);
+
+impl Dt {
+    fn utc(t: DateTime<Utc>) -> Self {
+        Self(t.fixed_offset())
+    }
+
+    /// Python's `isoformat()` / `str()`: microseconds only when non-zero.
+    fn python(&self, sep: char) -> String {
+        let micros = if self.0.timestamp_subsec_micros() == 0 {
+            ""
+        } else {
+            "%.6f"
+        };
+        let fmt = format!("%Y-%m-%d{sep}%H:%M:%S{micros}%:z");
+        self.0.format(&fmt).to_string()
+    }
+}
 
 impl Object for Dt {
     fn repr(self: &Arc<Self>) -> ObjectRepr {
@@ -643,8 +672,8 @@ impl Object for Dt {
     ) -> Result<Value, Error> {
         use chrono::Datelike;
         match method {
-            "isoformat" => Ok(state::iso(self.0).replace(".000000+", "+").into()),
-            "timestamp" => Ok(timestamp(self.0).into()),
+            "isoformat" => Ok(self.python('T').into()),
+            "timestamp" => Ok(timestamp(self.0.with_timezone(&Utc)).into()),
             "weekday" => Ok((self.0.weekday().num_days_from_monday() as i64).into()),
             "strftime" => {
                 let (fmt,): (&str,) = minijinja::value::from_args(args)?;
@@ -667,11 +696,7 @@ impl Object for Dt {
 
     /// `str(datetime)`
     fn render(self: &Arc<Self>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0.timestamp_subsec_micros() == 0 {
-            write!(f, "{}", self.0.format("%Y-%m-%d %H:%M:%S+00:00"))
-        } else {
-            write!(f, "{}", self.0.format("%Y-%m-%d %H:%M:%S%.6f+00:00"))
-        }
+        f.write_str(&self.python(' '))
     }
 }
 
@@ -781,7 +806,7 @@ fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
     if let Ok(t) = DateTime::parse_from_rfc3339(&iso) {
         return Some(t.with_timezone(&Utc));
     }
-    // Naive times are local, which is UTC here.
+    // Naive times are in the configured time zone.
     [
         "%Y-%m-%dT%H:%M:%S%.f",
         "%Y-%m-%dT%H:%M:%S",
@@ -794,7 +819,7 @@ fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
             .ok()
             .and_then(|d| d.and_hms_opt(0, 0, 0))
     })
-    .map(|n| n.and_utc())
+    .map(|n| local_tz().local_to_utc(n))
 }
 
 fn env(strict: bool) -> Environment<'static> {
@@ -941,16 +966,19 @@ fn env(strict: bool) -> Environment<'static> {
 
     env.add_function("now", |vm: &Vm| -> Result<Value, Error> {
         hass(vm)?.seen.lock().unwrap().time = true;
-        Ok(Value::from_object(Dt(Utc::now())))
+        let now = Utc::now();
+        Ok(Value::from_object(Dt(
+            now.with_timezone(&local_tz().offset(now))
+        )))
     });
     env.add_function("utcnow", |vm: &Vm| -> Result<Value, Error> {
         hass(vm)?.seen.lock().unwrap().time = true;
-        Ok(Value::from_object(Dt(Utc::now())))
+        Ok(Value::from_object(Dt::utc(Utc::now())))
     });
 
     fn as_timestamp(vm: &Vm, v: Value, default: Option<Value>) -> Result<Value, Error> {
         let t = match v.downcast_object_ref::<Dt>() {
-            Some(d) => Some(d.0),
+            Some(d) => Some(d.0.with_timezone(&Utc)),
             None => parse_datetime(&text(&v)),
         };
         or_default(
@@ -1165,6 +1193,26 @@ mod tests {
                 "{% for s in states.light %}{% if loop.index == 1 %}{% break %}{% endif %}{% endfor %}x"
             ),
             "x"
+        );
+    }
+
+    #[test]
+    fn local_time_zone() {
+        set_time_zone(Zone::load("Europe/Amsterdam").unwrap());
+        // Naive times are local; aware ones keep their offset.
+        let naive = r("{{ as_timestamp('2026-07-01 12:00:00') }}");
+        let now = r("{{ now().isoformat() }} {{ utcnow().isoformat() }}");
+        set_time_zone(Zone::utc());
+        assert_eq!(naive, "1782900000.0"); // 10:00 UTC (CEST, +02:00)
+        let (local, utc) = now.split_once(' ').unwrap();
+        assert!(
+            local.ends_with("+01:00") || local.ends_with("+02:00"),
+            "{local}"
+        );
+        assert!(utc.ends_with("+00:00"), "{utc}");
+        assert_eq!(
+            r("{{ states.sensor.temp.last_changed.isoformat()[-6:] }}"),
+            "+00:00"
         );
     }
 

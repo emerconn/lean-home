@@ -169,12 +169,40 @@ to the CI replay.
    use it, and `render_template` re-renders on the entities, domains or minute it read. Cases
    come from HA's source and the `automations` recording (the live template's 7 results match in
    order). The ha-src checkout has no `tests/`, so HA's own template tests are still to mine.
-   Measured on the dev PC: stripped binary +144 KiB (6.32 → 6.47 MB); idle RSS unchanged
-   (~6.6 MB); 200 live `render_template` subscriptions cost ~0.3 MB.
-3. **Config.** Read `configuration.yaml` with HA's tags (`!include`, `!secret`,
-   `!include_dir_*`), then `automations.yaml` and `scripts.yaml`.
-4. **Automations and scripts.** Triggers (state, time, MQTT first), conditions, actions; the
-   `automation.*`/`script.*` entities and services; the WebSocket commands the editor uses.
+   Measured on the dev PC: stripped binary +144 KiB (6.32 → 6.47 MB); process RSS (a quick
+   check, not the cgroup method of the [measurement rules](#measurement-rules)) unchanged at
+   idle (~6.6 MB) and ~0.3 MB more with 200 live `render_template` subscriptions.
+3. **Config.** (Done: `crates/lean-home/src/config.rs`.) `configuration.yaml` as HA's loader
+   (`annotatedyaml` on PyYAML) reads it: YAML 1.1 scalars (unquoted `on` is `true`, `3:00:00`
+   is 10800, `1e5` a string), anchors, `<<` merge keys, duplicate keys (last wins), and the
+   tags `!include`, `!include_dir_list`/`_merge_list`/`_named`/`_merge_named`, `!secret`
+   (nearest `secrets.yaml` up to the config dir), `!env_var`. Automations come from every
+   `automation`/`automation <label>` key and scripts from `script`/`script <label>`; they are
+   collected here and run in step 4. The **core config** (defaults, then
+   `.storage/core.config`, then `homeassistant:` keys) now fills `get_config`, including
+   `config_source`, the units and the **time zone**: templates' `now()` is local time in it, and
+   naive times in `as_timestamp` are read in it. Time zones come from the system zoneinfo, like
+   HA's Python `zoneinfo`; UTC needs none. Checked against HA: the `automations` scenario's
+   config parses to exactly what HA's loader makes of it
+   (`compat/fixtures/automations/configuration.json`), the scalar cases are PyYAML's own
+   results, and DST gaps and overlaps match Python's `zoneinfo`. Measured on the dev PC under the
+   [measurement rules](#measurement-rules) (`bench/bench.sh`, 1 CPU, 1 GiB): anon memory
+   unchanged at 0.6 MiB idle, peak 1.2 MiB; stripped binary +237 KiB (6.47 → 6.71 MB).
+   `chrono-tz` was tried first and dropped: its embedded time-zone database cost +2.1 MB of
+   binary and +2 MB RSS.
+4. **Automations and scripts.** Start with two checks on the template engine from 2.2, since
+   conditions and action data now depend on it, so a template bug is fixed in the step it would
+   break:
+   - **HA's template tests.** Fetch `tests/helpers/template/` from HA core at the release we
+     match (not in the ha-src checkout) and port the cases for the helpers 2.2 built. Fix what
+     they catch.
+   - **Template errors.** Add a failing template (with `report_errors`) to the `automations`
+     scenario and re-record, so `render_template`'s error events are checked against HA. Today
+     they follow HA's source, unverified.
+
+   Then: triggers (state, time, MQTT first), conditions, actions; the `automation.*`/`script.*`
+   entities and services; the WebSocket commands the editor uses. Add the template helpers
+   automations need from "Deferred" below.
 
 Measure memory and binary size before and after, as for steps 0 and 1.
 
@@ -182,7 +210,9 @@ Measure memory and binary size before and after, as for steps 0 and 1.
 
 Not a roadmap step: do it whenever lean-home should run on real hardware.
 
-1. **Static build:** musl, aarch64 (and x86_64), in a `FROM scratch` image, built in CI.
+1. **Static build:** musl, aarch64 (and x86_64), in a `FROM scratch` image, built in CI. Copy
+   the system's `/usr/share/zoneinfo` into it (a few MB on disk, nothing in memory: only the
+   configured zone is read), or a `time_zone` other than UTC fails to load.
 2. **Trimmed frontend.** The `home-assistant-frontend` package is 283 MB; the image needs far less
    (estimate: 20–30 MB, measure it):
 
@@ -208,7 +238,11 @@ Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the
 | Template helpers beyond the core set: datetime arithmetic (`timedelta`, `today_at`, `relative_time`), areas/devices/labels, `expand`, regex, `state_translated` | With 2.4, by what automations use | Each is small; add them against HA's tests when a case needs one |
 | `render_template` has no rate limit (HA: 1/s for domain listeners, 1/min for all states) | If a dashboard iterating all states proves costly | Re-rendering on every change is correct, only more work |
 | Registries are read-only: new MQTT entities aren't written to `core.entity_registry` (HA later picks the same ids, normally) | Step 5 | Needed once lean-home renames entities or assigns areas itself, i.e. with config flows; writing HA's file needs care not to corrupt it |
-| HA's opt-in IP ban (`http: login_attempts_threshold`, `ip_bans.yaml`) | With `configuration.yaml` parsing | Off by default in HA too; lean-home already serializes password checks and backs off per IP |
+| HA's opt-in IP ban (`http: login_attempts_threshold`, `ip_bans.yaml`) | Now unblocked (2.3 parses `configuration.yaml`); when a user asks | Off by default in HA too; lean-home already serializes password checks and backs off per IP |
+| Packages (`homeassistant: packages:`): merged into the config by HA; lean-home warns and ignores them, so automations in packages are missing | Before automations ship to users (with or right after 2.4) | Power users' configs use them; HA's merge rules per domain need care |
+| Blueprints: `!input` loads as a `{"!input": name}` marker, `use_blueprint` automations aren't expanded | With 2.4 or after, by demand | Blueprint automations are common, but need the automation engine first |
+| YAML corner cases: non-string keys become Python's `str()` of them (`1:` → `"1"`), `.inf`/`.nan` become strings, dates become strings rather than date objects | When a config needs them | JSON has no such keys or numbers; HA configs quote dates where they matter |
+| `homeassistant:` keys beyond location and units (`customize`, `allowlist_external_dirs`, `media_dirs`, `auth_providers`…) | With the features that use them | Nothing reads them yet |
 | MQTT websocket transport | When a user needs it | Rare; brokers behind a reverse proxy |
 | MQTT template-schema lights (`schema: template`) | When a device needs it | Rare compared to the default and JSON schemas |
 | MQTT device discovery `child_devices` (HA 2026.x) | When a firmware sends it | New; nothing we know of uses it yet |

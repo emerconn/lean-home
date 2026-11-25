@@ -1,0 +1,145 @@
+{
+  "default_config": null,
+  "automation": [
+    {
+      "id": "1700000000001",
+      "alias": "Fan lights ceiling",
+      "description": "State trigger, state condition",
+      "triggers": [
+        {
+          "trigger": "state",
+          "entity_id": "switch.demo_device_fan",
+          "to": "on"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "state",
+          "entity_id": "binary_sensor.demo_device_front_door",
+          "state": "off"
+        }
+      ],
+      "actions": [
+        {
+          "action": "light.turn_on",
+          "target": {
+            "entity_id": "light.demo_device_ceiling"
+          },
+          "data": {
+            "brightness_pct": 30
+          }
+        }
+      ],
+      "mode": "single"
+    },
+    {
+      "id": "1700000000002",
+      "alias": "Button blinks desk",
+      "description": "MQTT trigger, runs a script with a field",
+      "triggers": [
+        {
+          "trigger": "mqtt",
+          "topic": "lh/button",
+          "payload": "press"
+        }
+      ],
+      "actions": [
+        {
+          "action": "script.blink",
+          "data": {
+            "target_light": "light.demo_device_desk"
+          }
+        }
+      ],
+      "mode": "queued"
+    },
+    {
+      "id": "1700000000003",
+      "alias": "Nightly off",
+      "description": "Time trigger (doesn't fire during the recording), template condition",
+      "triggers": [
+        {
+          "trigger": "time",
+          "at": "03:00:00"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "template",
+          "value_template": "{{ states('sensor.demo_device_temperature') | float(0) < 30 }}"
+        }
+      ],
+      "actions": [
+        {
+          "action": "light.turn_off",
+          "target": {
+            "entity_id": [
+              "light.demo_device_ceiling",
+              "light.demo_device_desk"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "script": {
+    "blink": {
+      "alias": "Blink",
+      "description": "Turn a light on, wait, then choose by the fan's state",
+      "fields": {
+        "target_light": {
+          "description": "Light to blink",
+          "example": "light.demo_device_desk",
+          "selector": {
+            "entity": {
+              "domain": "light"
+            }
+          }
+        }
+      },
+      "mode": "single",
+      "sequence": [
+        {
+          "action": "light.turn_on",
+          "target": {
+            "entity_id": "{{ target_light }}"
+          }
+        },
+        {
+          "delay": {
+            "seconds": 1
+          }
+        },
+        {
+          "choose": [
+            {
+              "conditions": [
+                {
+                  "condition": "state",
+                  "entity_id": "switch.demo_device_fan",
+                  "state": "on"
+                }
+              ],
+              "sequence": [
+                {
+                  "action": "light.turn_off",
+                  "target": {
+                    "entity_id": "{{ target_light }}"
+                  }
+                }
+              ]
+            }
+          ],
+          "default": [
+            {
+              "action": "switch.turn_on",
+              "target": {
+                "entity_id": "switch.demo_device_fan"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

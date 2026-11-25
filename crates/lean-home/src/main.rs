@@ -1,4 +1,5 @@
 mod auth;
+mod config;
 mod http;
 mod mqtt;
 mod registry;
@@ -26,11 +27,20 @@ pub struct App {
     pub config_dir: PathBuf,
     pub registry: registry::Registry,
     pub mqtt: OnceLock<Arc<mqtt::Mqtt>>,
+    pub config: config::Config,
 }
 
 impl App {
     pub fn load(config_dir: &Path, frontend: &Path, demo: bool) -> Result<Self, String> {
+        let config = config::load(config_dir)?;
+        template::set_time_zone(config.core.tz.clone());
+        eprintln!(
+            "config: {} automations, {} scripts",
+            config.automations.len(),
+            config.scripts.len()
+        );
         let app = Self {
+            config,
             auth: auth::Auth::load(config_dir)?,
             states: Arc::default(),
             index_html: http::render_index(frontend)?,
@@ -64,31 +74,32 @@ impl App {
         c
     }
 
-    /// `get_config`. shortcut: HA's defaults; read `.storage/core.config` when location/units matter.
+    /// `get_config`
     pub fn config_json(&self) -> Value {
+        let c = &self.config.core;
         json!({
             "allowlist_external_dirs": [],
             "allowlist_external_urls": [],
             "components": self.components(),
             "config_dir": self.config_dir.display().to_string(),
-            "config_source": "default",
-            "country": null,
-            "currency": "EUR",
+            "config_source": c.config_source,
+            "country": c.country,
+            "currency": c.currency,
             "debug": false,
-            "elevation": 0,
-            "external_url": null,
-            "internal_url": null,
-            "language": "en",
-            "latitude": 0,
-            "location_name": "Home",
+            "elevation": c.elevation,
+            "external_url": c.external_url,
+            "internal_url": c.internal_url,
+            "language": c.language,
+            "latitude": c.latitude,
+            "location_name": c.location_name,
             "logging": {"log_file_disabled_reason": null},
-            "longitude": 0,
-            "radius": 100,
+            "longitude": c.longitude,
+            "radius": c.radius,
             "recovery_mode": false,
             "safe_mode": false,
             "state": "RUNNING",
-            "time_zone": "UTC",
-            "unit_system": {"length": "km", "accumulated_precipitation": "mm", "area": "m²", "mass": "g", "pressure": "Pa", "temperature": "°C", "volume": "L", "wind_speed": "m/s"},
+            "time_zone": c.time_zone,
+            "unit_system": c.units_json(),
             "version": HA_VERSION,
             "whitelist_external_dirs": [],
         })
