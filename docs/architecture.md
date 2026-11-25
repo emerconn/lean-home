@@ -81,9 +81,46 @@ with no protocol code of our own, then replaces sidecars only where it pays off.
 | **Zigbee** | Zigbee2MQTT (GPL-3.0) | Covered by native MQTT discovery; ZHA is Python and stays in the plugin host | None needed |
 
 Order: speak both servers' WebSocket APIs → Matter in Rust (`rs-matter` controller) → Z-Wave last
-or never. Rough sidecar footprints, **estimates, not measured** under our rules: Matter Server
-~60–120 MB, Z-Wave JS Server ~50–100 MB, Z-Wave JS UI ~100–200 MB. Native Rust replacements would
-likely be a few MB each; measure before claiming.
+or never. Rough sidecar footprints, **estimates, not measured** under our rules: Z-Wave JS Server
+~50–100 MB, Z-Wave JS UI ~100–200 MB. Native Rust replacements would likely be a few MB each;
+measure before claiming.
+
+The Matter Server in use on the reference HA host (Pi 4, 2026-11-25; observed with `docker stats`,
+**not** under the bench rules) is `matterjs-server` 1.6.0 (matter.js on Node 24, the successor of
+`python-matter-server` with the same WebSocket API): **162 MiB** RSS idle with 1 device, image
+542 MB. That is the number a Rust controller has to beat, and it's larger than the estimate above.
+
+### Camera streaming sidecar: go2rtc
+
+HA doesn't stream cameras itself for WebRTC: its `go2rtc` integration drives a **go2rtc** process
+(Go, MIT, AlexxIT) over go2rtc's HTTP API: it registers each camera's stream source
+(`PUT /api/streams`), forwards the browser's WebRTC offer to it, and go2rtc remuxes RTSP to WebRTC
+without transcoding. HA bundles the binary and starts it itself, or uses an external one when
+`go2rtc: url:` is set; it expects a fixed version (`RECOMMENDED_VERSION` in
+`homeassistant.components.go2rtc.const`, 1.9.15 in HA 2026.11.2). HLS and camera snapshots don't
+go through go2rtc: HLS is HA's `stream` component (PyAV), snapshots are ffmpeg.
+
+Lesson from the reference host: cheap cameras cap concurrent RTSP sessions (Tapo C220: **3**;
+the 4th is refused). One dashboard view in stock HA opened up to ~10: go2rtc's WebRTC producer, its
+retries after refusals (leaking half-closed sockets), HA's HLS stream (PyAV) alongside it, and an
+ffmpeg snapshot. Fix there: go2rtc as its own container with the stream defined statically, and a
+Generic Camera reading go2rtc's restream (`rtsp://127.0.0.1:8554/<name>`, snapshots from
+`/api/frame.jpeg`), so the camera always sees **one** session however many viewers. Observed cost:
+go2rtc 1.9.15 **28 MiB** RSS, under 1% of a Pi 4 core with a stream running (8 clients on it at
+peak), image 280 MB (mostly ffmpeg).
+
+Requirements for lean-home, as sidecar client first, native later:
+
+1. **One upstream session per camera**, fanned out to every consumer (WebRTC, HLS, snapshots).
+   Never let a snapshot or a second viewer open its own camera connection.
+2. **Speak go2rtc's API** as HA's `go2rtc` integration does, so stock go2rtc works as a sidecar
+   on day one (same version pin as HA).
+3. **Native Rust path** (candidates, **unverified**: check maturity before planning on them): RTSP
+   client `retina` (MIT/Apache 2.0, used by Moonfire NVR), WebRTC `str0m` (MIT, sans-IO) or
+   `webrtc-rs` (MIT/Apache 2.0), fragmented-MP4 muxing for HLS. Snapshots without ffmpeg need an
+   H.264 keyframe decoder, which is the expensive part: keep ffmpeg (or go2rtc's frame API) for
+   that unless a small decoder turns up.
+4. ONVIF (PTZ, events) stays a separate, plain SOAP integration; it doesn't need the stream.
 
 ### Voice: Assist pipeline and Wyoming
 
