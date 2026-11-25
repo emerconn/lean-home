@@ -1,6 +1,8 @@
 # compat
 
 Recorded traffic from real Home Assistant, used as the reference that lean-home must match.
+The HA, frontend and Mosquitto versions are pinned in [`versions.env`](versions.env); see
+[`docs/compatibility.md`](../docs/compatibility.md) for upgrading them.
 
 `fixtures/frontend-load/` is one frontend session against HA **2026.11.2** (frontend **20261028.6**):
 log in through the real login form, wait for the dashboard, toggle `light.kitchen`.

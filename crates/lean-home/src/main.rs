@@ -176,3 +176,14 @@ fn exit(msg: &str) -> ! {
     eprintln!("{msg}");
     std::process::exit(2)
 }
+
+#[cfg(test)]
+#[test]
+fn ha_version_is_the_compat_pin() {
+    let pins = include_str!("../../../compat/versions.env");
+    assert!(
+        pins.lines()
+            .any(|l| l == format!("HA_VERSION={HA_VERSION}")),
+        "HA_VERSION in main.rs differs from compat/versions.env"
+    );
+}
