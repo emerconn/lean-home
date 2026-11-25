@@ -20,6 +20,20 @@ pub fn set_time_zone(tz: Zone) {
     *TIME_ZONE.write().unwrap() = Some(tz);
 }
 
+/// The clock templates read; tests freeze it, as HA's do.
+#[cfg(not(test))]
+fn now_utc() -> DateTime<Utc> {
+    Utc::now()
+}
+
+#[cfg(test)]
+static FROZEN_NOW: RwLock<Option<DateTime<Utc>>> = RwLock::new(None);
+
+#[cfg(test)]
+fn now_utc() -> DateTime<Utc> {
+    FROZEN_NOW.read().unwrap().unwrap_or_else(Utc::now)
+}
+
 fn local_tz() -> Zone {
     TIME_ZONE.read().unwrap().clone().unwrap_or_else(Zone::utc)
 }
@@ -31,6 +45,10 @@ pub struct Listeners {
     pub domains: Vec<String>,
     pub entities: Vec<String>,
     pub time: bool,
+    /// Counting states (`states | count`) only needs a re-render when entities come or go
+    /// (HA's `*_lifecycle` sets).
+    pub all_lifecycle: bool,
+    pub domains_lifecycle: Vec<String>,
 }
 
 impl Listeners {
@@ -46,24 +64,61 @@ impl Listeners {
         }
     }
 
-    /// Does this state change need a re-render?
-    pub fn matches(&self, entity_id: &str) -> bool {
-        self.all
-            || self.entities.iter().any(|e| e == entity_id)
-            || entity_id
-                .split_once('.')
-                .is_some_and(|(d, _)| self.domains.iter().any(|x| x == d))
+    fn domain_lifecycle(&mut self, d: &str) {
+        if !self.domains_lifecycle.iter().any(|e| e == d) {
+            self.domains_lifecycle.push(d.into());
+        }
     }
 
-    /// The `listeners` of a `render_template` event. Iterating all states listens to everything,
-    /// and HA then reports no entities or domains.
+    /// Does this state change need a re-render? `lifecycle`: the entity was added or removed
+    /// (HA's `_event_triggers_rerender`).
+    pub fn matches(&self, entity_id: &str, lifecycle: bool) -> bool {
+        let in_domain = |list: &[String]| {
+            entity_id
+                .split_once('.')
+                .is_some_and(|(d, _)| list.iter().any(|x| x == d))
+        };
+        self.all
+            || self.entities.iter().any(|e| e == entity_id)
+            || in_domain(&self.domains)
+            || lifecycle && (self.all_lifecycle || in_domain(&self.domains_lifecycle))
+    }
+
+    /// The `listeners` of a `render_template` event (HA's `TrackStates`): lifecycle listening
+    /// shows as `all` or as its domains, and listening to all states reports no entities or
+    /// domains.
     pub fn json(&self) -> serde_json::Value {
-        let (domains, entities) = if self.all {
+        let all = self.all || self.all_lifecycle;
+        let (domains, entities) = if all {
             (vec![], vec![])
         } else {
-            (self.domains.clone(), self.entities.clone())
+            let mut d = self.domains.clone();
+            d.extend(
+                self.domains_lifecycle
+                    .iter()
+                    .filter(|x| !self.domains.contains(x))
+                    .cloned(),
+            );
+            (d, self.entities.clone())
         };
-        json!({"all": self.all, "domains": domains, "entities": entities, "time": self.time})
+        json!({"all": all, "domains": domains, "entities": entities, "time": self.time})
+    }
+}
+
+/// HA's `MAX_TEMPLATE_OUTPUT`.
+const MAX_OUTPUT: usize = 256 * 1024;
+
+/// No `{{`, `{%` or `{#`: HA doesn't render it, and `render_template` sends it unparsed.
+pub fn is_static(tpl: &str) -> bool {
+    !["{{", "{%", "{#"].iter().any(|d| tpl.contains(d))
+}
+
+/// The `result` HA sends for a rendered template: parsed, except for a static one.
+pub fn result(tpl: &str, text: &str) -> serde_json::Value {
+    if is_static(tpl) {
+        text.into()
+    } else {
+        parse_result(text)
     }
 }
 
@@ -74,16 +129,58 @@ pub fn render(
     vars: &serde_json::Value,
     strict: bool,
 ) -> Result<(String, Listeners), String> {
+    render_logged(states, tpl, vars, strict).0
+}
+
+/// A log line HA's template engine emits while rendering, as `(level, message)`: what
+/// `render_template` with `report_errors` forwards.
+pub type Log = (&'static str, String);
+
+/// `render`, plus the lines HA logs: `'x' is undefined` as a WARNING when an undefined variable
+/// is rendered, or as an ERROR just before an `UndefinedError`.
+pub fn render_logged(
+    states: &Arc<States>,
+    tpl: &str,
+    vars: &serde_json::Value,
+    strict: bool,
+) -> (Result<(String, Listeners), String>, Vec<Log>) {
+    let env = if strict { &*STRICT } else { &*LENIENT };
+    let compiled = match env.template_from_str(tpl) {
+        Ok(t) => t,
+        Err(e) => return (Err(ha_error(&e)), vec![]),
+    };
+    // Names the template reads but nothing defines, in source order: the ones HA's messages name.
+    let mut undefined: Vec<String> = compiled
+        .undeclared_variables(false)
+        .into_iter()
+        .filter(|n| n != "states" && vars.get(n).is_none() && !env.globals().any(|(g, _)| g == n))
+        .collect();
+    undefined.sort_by_key(|n| tpl.find(n.as_str()));
     let hass = Arc::new(Hass {
         states: states.clone(),
         tpl: tpl.into(),
         seen: Mutex::default(),
+        undefined,
+        logs: Mutex::default(),
     });
-    let env = if strict { &*STRICT } else { &*LENIENT };
     let ctx = minijinja::context! { states => Value::from_dyn_object(hass.clone()), ..ser(vars) };
-    let out = env.render_str(tpl, ctx).map_err(|e| ha_error(&e))?;
-    let seen = hass.seen.lock().unwrap().clone();
-    Ok((out.trim().to_string(), seen))
+    let rendered = compiled.render(ctx);
+    let mut logs = std::mem::take(&mut *hass.logs.lock().unwrap());
+    let result = match rendered {
+        Err(e) if e.kind() == ErrorKind::UndefinedError && !hass.undefined.is_empty() => {
+            let msg = format!("'{}' is undefined", hass.undefined[0]);
+            if !strict {
+                logs.push(("ERROR", msg.clone()));
+            }
+            Err(format!("UndefinedError: {msg}"))
+        }
+        Err(e) => Err(ha_error(&e)),
+        Ok(out) if out.len() > MAX_OUTPUT => Err(format!(
+            "TemplateError: Template output exceeded maximum size of {MAX_OUTPUT} characters"
+        )),
+        Ok(out) => Ok((out.trim().to_string(), hass.seen.lock().unwrap().clone())),
+    };
+    (result, logs)
 }
 
 fn ser<T: serde::Serialize>(v: T) -> Value {
@@ -413,12 +510,33 @@ struct Hass {
     /// For HA's "no default was specified" messages.
     tpl: String,
     seen: Mutex<Listeners>,
+    /// Undefined variable names, for HA's `'x' is undefined` messages.
+    undefined: Vec<String>,
+    logs: Mutex<Vec<Log>>,
 }
 
 impl Hass {
+    /// For helpers that read the state (`states()`, `is_state`…): always a listener.
     fn get(self: &Arc<Self>, entity_id: &str) -> Option<Arc<state::State>> {
         self.seen.lock().unwrap().entity(entity_id);
         self.states.get(entity_id)
+    }
+
+    /// `states.domain.object_id` / `states['light.x']` (HA's `_get_state_if_valid`): a missing
+    /// entity listens right away and must be a valid id; an existing one listens when an
+    /// attribute is read (see `TemplateState`).
+    fn lookup(self: &Arc<Self>, entity_id: &str) -> Value {
+        match self.states.get(entity_id) {
+            Some(s) => self.template_state(s),
+            None if !valid_entity_id(entity_id) => Value::from(Error::new(
+                ErrorKind::InvalidOperation,
+                format!("TemplateError: Invalid entity ID '{entity_id}'"),
+            )),
+            None => {
+                self.seen.lock().unwrap().entity(entity_id);
+                Value::from(())
+            }
+        }
     }
 
     fn no_default(&self, function: &str, value: &Value) -> Error {
@@ -450,15 +568,31 @@ impl Object for Hass {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let name = key.as_str()?;
         if name.contains('.') {
-            return Some(
-                self.get(name)
-                    .map_or(Value::from(()), |s| self.template_state(s)),
-            );
+            return Some(self.lookup(name));
+        }
+        // Jinja probes these on any object; HA answers None.
+        if matches!(
+            name,
+            "contextfunction" | "evalcontextfunction" | "environmentfunction" | "jinja_pass_arg"
+        ) {
+            return Some(Value::from(()));
+        }
+        if !valid_slug(name, false) {
+            return Some(Value::from(Error::new(
+                ErrorKind::InvalidOperation,
+                format!("TemplateError: Invalid domain name '{name}'"),
+            )));
         }
         Some(Value::from_object(Domain {
             hass: self.clone(),
             domain: name.into(),
         }))
+    }
+
+    /// `states | count`: re-render only when entities come or go.
+    fn enumerator_len(self: &Arc<Self>) -> Option<usize> {
+        self.seen.lock().unwrap().all_lifecycle = true;
+        Some(self.states.all().len())
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
@@ -495,10 +629,29 @@ impl Hass {
                 states: self.states.clone(),
                 tpl: String::new(),
                 seen: Mutex::default(),
+                undefined: vec![],
+                logs: Mutex::default(),
             }),
             s,
         })
     }
+}
+
+/// HA's `valid_domain` / object id rule: `[0-9a-z_]`, no leading or trailing `_`, and for a
+/// domain no `__`.
+fn valid_slug(s: &str, allow_double_underscore: bool) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|c| c.is_ascii_digit() || c.is_ascii_lowercase() || c == b'_')
+        && !s.starts_with('_')
+        && !s.ends_with('_')
+        && (allow_double_underscore || !s.contains("__"))
+}
+
+/// HA's `valid_entity_id`: `domain.object_id`.
+fn valid_entity_id(id: &str) -> bool {
+    id.split_once('.')
+        .is_some_and(|(d, o)| valid_slug(d, false) && valid_slug(o, true))
 }
 
 fn states_fn(
@@ -535,10 +688,23 @@ impl Object for Domain {
 
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let id = format!("{}.{}", self.domain, key.as_str()?);
+        Some(self.hass.lookup(&id))
+    }
+
+    fn enumerator_len(self: &Arc<Self>) -> Option<usize> {
+        self.hass
+            .seen
+            .lock()
+            .unwrap()
+            .domain_lifecycle(&self.domain);
+        let prefix = format!("{}.", self.domain);
         Some(
             self.hass
-                .get(&id)
-                .map_or(Value::from(()), |s| self.hass.template_state(s)),
+                .states
+                .all()
+                .iter()
+                .filter(|s| s.entity_id.starts_with(&prefix))
+                .count(),
         )
     }
 
@@ -575,6 +741,23 @@ impl Object for TemplateState {
         let (domain, object_id) = s.entity_id.split_once('.').unwrap_or(("", &s.entity_id));
         if key == "entity_id" {
             return Some(Value::from(&*s.entity_id));
+        }
+        // HA's `_COLLECTABLE_STATE_ATTRIBUTES`: only these (and state_with_unit) listen.
+        const KNOWN: [&str; 11] = [
+            "state",
+            "attributes",
+            "last_changed",
+            "last_updated",
+            "last_reported",
+            "context",
+            "domain",
+            "object_id",
+            "name",
+            "state_with_unit",
+            "entity_id",
+        ];
+        if !KNOWN.contains(&key) {
+            return None;
         }
         self.hass.seen.lock().unwrap().entity(&s.entity_id);
         Some(match key {
@@ -700,6 +883,82 @@ impl Object for Dt {
     }
 }
 
+/// What orjson refuses: datetimes and state objects (`TypeError` in HA).
+fn unserializable(v: &Value) -> Option<&'static str> {
+    if v.downcast_object_ref::<Dt>().is_some() {
+        return Some("datetime.datetime");
+    }
+    if v.downcast_object_ref::<TemplateState>().is_some() {
+        return Some("TemplateState");
+    }
+    use minijinja::value::ValueKind as K;
+    match v.kind() {
+        K::Seq | K::Iterable => v.try_iter().ok()?.find_map(|x| unserializable(&x)),
+        K::Map => v
+            .try_iter()
+            .ok()?
+            .find_map(|k| unserializable(&v.get_item(&k).unwrap_or_default())),
+        _ => None,
+    }
+}
+
+/// Python's `json.dumps(v, ensure_ascii=True, indent=2 if pretty else None)`.
+fn py_json(v: &serde_json::Value, pretty: bool, level: usize, out: &mut String) {
+    let (item_sep, nl) = if pretty { (",", true) } else { (", ", false) };
+    let pad = |out: &mut String, l: usize| {
+        if nl {
+            out.push('\n');
+            out.push_str(&"  ".repeat(l));
+        }
+    };
+    match v {
+        serde_json::Value::String(s) => {
+            for c in serde_json::to_string(s).unwrap_or_default().chars() {
+                if c.is_ascii() {
+                    out.push(c);
+                } else {
+                    let mut buf = [0u16; 2];
+                    for u in c.encode_utf16(&mut buf) {
+                        let _ = write!(out, "\\u{u:04x}");
+                    }
+                }
+            }
+        }
+        serde_json::Value::Array(a) if !a.is_empty() => {
+            out.push('[');
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(item_sep);
+                }
+                pad(out, level + 1);
+                py_json(x, pretty, level + 1, out);
+            }
+            pad(out, level);
+            out.push(']');
+        }
+        serde_json::Value::Object(m) if !m.is_empty() => {
+            out.push('{');
+            for (i, (k, x)) in m.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(item_sep);
+                }
+                pad(out, level + 1);
+                py_json(
+                    &serde_json::Value::String(k.clone()),
+                    pretty,
+                    level + 1,
+                    out,
+                );
+                out.push_str(": ");
+                py_json(x, pretty, level + 1, out);
+            }
+            pad(out, level);
+            out.push('}');
+        }
+        other => out.push_str(&other.to_string()),
+    }
+}
+
 fn timestamp(t: DateTime<Utc>) -> f64 {
     t.timestamp_micros() as f64 / 1e6
 }
@@ -800,6 +1059,18 @@ fn or_default(
     }
 }
 
+/// Argument `i`, positional or by keyword. Unlike `Option<Value>` parameters, a passed `none`
+/// counts as given (`bool(x, none)` defaults to None).
+fn arg(args: &[Value], i: usize, kw: &Kwargs, name: &str) -> Result<Option<Value>, Error> {
+    if let Some(v) = args.get(i) {
+        return Ok(Some(v.clone()));
+    }
+    if kw.has(name) {
+        return Ok(Some(kw.get::<Value>(name)?));
+    }
+    Ok(None)
+}
+
 fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
     let s = s.trim();
     let iso = s.replacen(' ', "T", 1);
@@ -829,7 +1100,20 @@ fn env(strict: bool) -> Environment<'static> {
     } else {
         UndefinedBehavior::Lenient
     });
-    env.set_formatter(|out, _, v| {
+    env.set_formatter(|out, vm, v| {
+        // Rendering an undefined variable: HA's LoggingUndefined.__str__ warns.
+        // shortcut: names the first undefined variable; with several, or a missing attribute of
+        // a defined one, the name can be wrong or missing. Also HA warns on `if`/`for` over an
+        // undefined, which never reaches the formatter.
+        if v.is_undefined()
+            && let Ok(h) = hass(vm)
+            && let Some(name) = h.undefined.first()
+        {
+            h.logs
+                .lock()
+                .unwrap()
+                .push(("WARNING", format!("'{name}' is undefined")));
+        }
         let mut s = String::new();
         py_str(v, &mut s);
         out.write_str(&s).map_err(Error::from)
@@ -881,21 +1165,31 @@ fn env(strict: bool) -> Environment<'static> {
     env.add_filter("has_value", has_value);
     env.add_test("has_value", has_value);
 
-    fn float(vm: &Vm, v: Value, default: Option<Value>) -> Result<Value, Error> {
+    fn float(vm: &Vm, v: Value, args: Rest<Value>, kw: Kwargs) -> Result<Value, Error> {
+        let default = arg(&args, 0, &kw, "default")?;
+        kw.assert_all_used()?;
         let f = to_float(&v).map(Value::from);
         or_default(vm, "float", &v, f, default)
     }
     env.add_function("float", float);
     env.add_filter("float", float);
 
-    fn int(vm: &Vm, v: Value, default: Option<Value>, base: Option<u32>) -> Result<Value, Error> {
-        let i = to_int(&v, base.unwrap_or(10)).map(Value::from);
+    fn int(vm: &Vm, v: Value, args: Rest<Value>, kw: Kwargs) -> Result<Value, Error> {
+        let default = arg(&args, 0, &kw, "default")?;
+        let base = arg(&args, 1, &kw, "base")?
+            .and_then(|b| b.as_i64())
+            .and_then(|b| u32::try_from(b).ok())
+            .unwrap_or(10);
+        kw.assert_all_used()?;
+        let i = to_int(&v, base).map(Value::from);
         or_default(vm, "int", &v, i, default)
     }
     env.add_function("int", int);
     env.add_filter("int", int);
 
-    fn bool_(vm: &Vm, v: Value, default: Option<Value>) -> Result<Value, Error> {
+    fn bool_(vm: &Vm, v: Value, args: Rest<Value>, kw: Kwargs) -> Result<Value, Error> {
+        let default = arg(&args, 0, &kw, "default")?;
+        kw.assert_all_used()?;
         let b = to_bool(&v).map(Value::from);
         or_default(vm, "bool", &v, b, default)
     }
@@ -934,15 +1228,13 @@ fn env(strict: bool) -> Environment<'static> {
     });
 
     /// HA's `forgiving_round`: an int with precision 0, else a float.
-    fn round(
-        vm: &Vm,
-        v: Value,
-        precision: Option<i32>,
-        method: Option<&str>,
-        kw: Kwargs,
-    ) -> Result<Value, Error> {
-        let default: Option<Value> = kw.get("default")?;
-        let p = precision.unwrap_or(0);
+    fn round(vm: &Vm, v: Value, args: Rest<Value>, kw: Kwargs) -> Result<Value, Error> {
+        let precision = arg(&args, 0, &kw, "precision")?;
+        let method = arg(&args, 1, &kw, "method")?;
+        let default = arg(&args, 2, &kw, "default")?;
+        kw.assert_all_used()?;
+        let method = method.as_ref().and_then(|m| m.as_str());
+        let p = precision.and_then(|p| p.as_i64()).unwrap_or(0) as i32;
         let m = 10f64.powi(p);
         let r = to_float(&v)
             .filter(|f| f.is_finite())
@@ -966,17 +1258,19 @@ fn env(strict: bool) -> Environment<'static> {
 
     env.add_function("now", |vm: &Vm| -> Result<Value, Error> {
         hass(vm)?.seen.lock().unwrap().time = true;
-        let now = Utc::now();
+        let now = now_utc();
         Ok(Value::from_object(Dt(
             now.with_timezone(&local_tz().offset(now))
         )))
     });
     env.add_function("utcnow", |vm: &Vm| -> Result<Value, Error> {
         hass(vm)?.seen.lock().unwrap().time = true;
-        Ok(Value::from_object(Dt::utc(Utc::now())))
+        Ok(Value::from_object(Dt::utc(now_utc())))
     });
 
-    fn as_timestamp(vm: &Vm, v: Value, default: Option<Value>) -> Result<Value, Error> {
+    fn as_timestamp(vm: &Vm, v: Value, args: Rest<Value>, kw: Kwargs) -> Result<Value, Error> {
+        let default = arg(&args, 0, &kw, "default")?;
+        kw.assert_all_used()?;
         let t = match v.downcast_object_ref::<Dt>() {
             Some(d) => Some(d.0.with_timezone(&Utc)),
             None => parse_datetime(&text(&v)),
@@ -995,32 +1289,111 @@ fn env(strict: bool) -> Environment<'static> {
     fn to_json(v: Value, kw: Kwargs) -> Result<String, Error> {
         let pretty: Option<bool> = kw.get("pretty_print")?;
         let sort: Option<bool> = kw.get("sort_keys")?;
-        let _: Option<bool> = kw.get("ensure_ascii")?;
+        let ascii: Option<bool> = kw.get("ensure_ascii")?;
         kw.assert_all_used()?;
+        if let Some(kind) = unserializable(&v) {
+            return Err(Error::new(
+                ErrorKind::InvalidOperation,
+                format!("TypeError: Type is not JSON serializable: {kind}"),
+            ));
+        }
         let mut j = serde_json::to_value(&v)
             .map_err(|e| Error::new(ErrorKind::BadSerialization, e.to_string()))?;
         if sort == Some(true) {
             j.sort_all_objects();
         }
-        // orjson's compact separators, or indent 2 with pretty_print
-        Ok(if pretty == Some(true) {
-            serde_json::to_string_pretty(&j)
+        let mut out = String::new();
+        if ascii == Some(true) {
+            // HA uses Python's json for ensure_ascii: its separators and \uXXXX escapes.
+            py_json(&j, pretty == Some(true), 0, &mut out);
+        } else if pretty == Some(true) {
+            // orjson's OPT_INDENT_2
+            out = serde_json::to_string_pretty(&j).unwrap_or_default();
         } else {
-            serde_json::to_string(&j)
+            // orjson's compact output
+            out = serde_json::to_string(&j).unwrap_or_default();
         }
-        .unwrap_or_default())
+        Ok(out)
     }
     env.add_filter("to_json", to_json);
 
-    fn from_json(vm: &Vm, v: Value, default: Option<Value>) -> Result<Value, Error> {
+    fn from_json(vm: &Vm, v: Value, args: Rest<Value>, kw: Kwargs) -> Result<Value, Error> {
+        let default = arg(&args, 0, &kw, "default")?;
+        kw.assert_all_used()?;
         let parsed = serde_json::from_str::<serde_json::Value>(&text(&v))
             .ok()
             .map(|j| ser(&j));
         or_default(vm, "from_json", &v, parsed, default)
     }
     env.add_filter("from_json", from_json);
+
+    /// Jinja's `do_urlencode`: a string is quoted with `/` kept; a dict (or list of pairs)
+    /// becomes `k=v&...` with query quoting (`+` for spaces).
+    fn urlencode(v: Value) -> Result<String, Error> {
+        fn quote(v: &Value, for_qs: bool) -> String {
+            let mut out = String::new();
+            for b in text(v).bytes() {
+                match b {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' => {
+                        out.push(b as char)
+                    }
+                    b'/' if !for_qs => out.push('/'),
+                    b' ' if for_qs => out.push('+'),
+                    b => {
+                        let _ = write!(out, "%{b:02X}");
+                    }
+                }
+            }
+            out
+        }
+        use minijinja::value::ValueKind as K;
+        let pairs: Vec<(Value, Value)> = match v.kind() {
+            K::Map => v
+                .try_iter()?
+                .map(|k| (k.clone(), v.get_item(&k).unwrap_or_default()))
+                .collect(),
+            K::Seq | K::Iterable => v
+                .try_iter()?
+                .map(|p| {
+                    (
+                        p.get_item_by_index(0).unwrap_or_default(),
+                        p.get_item_by_index(1).unwrap_or_default(),
+                    )
+                })
+                .collect(),
+            _ => return Ok(quote(&v, false)),
+        };
+        Ok(pairs
+            .iter()
+            .map(|(k, x)| format!("{}={}", quote(k, true), quote(x, true)))
+            .collect::<Vec<_>>()
+            .join("&"))
+    }
+    env.add_filter("urlencode", urlencode);
+
+    // HA's `_random_every_time`: a new pick on every render, not cached like Jinja's.
+    env.add_filter("random", |v: Value| -> Result<Value, Error> {
+        let items: Vec<Value> = match v.as_str() {
+            Some(s) => s.chars().map(|c| Value::from(c.to_string())).collect(),
+            None => v.try_iter()?.collect(),
+        };
+        if items.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidOperation,
+                "IndexError: Cannot choose from an empty sequence",
+            ));
+        }
+        let mut r = [0u8; 8];
+        getrandom::fill(&mut r)
+            .map_err(|e| Error::new(ErrorKind::InvalidOperation, e.to_string()))?;
+        Ok(items[(u64::from_le_bytes(r) % items.len() as u64) as usize].clone())
+    });
     env
 }
+
+#[cfg(test)]
+#[path = "template_ha_cases.rs"]
+mod ha_cases;
 
 #[cfg(test)]
 mod tests {
@@ -1078,7 +1451,7 @@ mod tests {
             l.json(),
             json!({"all": false, "domains": [], "entities": ["sensor.temp", "binary_sensor.door", "light.ceiling", "sensor.missing", "switch.fan"], "time": false})
         );
-        assert!(l.matches("switch.fan") && !l.matches("light.desk"));
+        assert!(l.matches("switch.fan", false) && !l.matches("light.desk", false));
     }
 
     /// The live template in compat/fixtures/automations: the device changes HA saw, in order,
@@ -1117,15 +1490,29 @@ mod tests {
             set(id, st, a);
             render_if_changed();
         }
-        let want = include_str!("../../../compat/fixtures/automations/ws.jsonl")
-            .lines()
-            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-            .filter(|l| l["dir"] == "recv")
-            .flat_map(|l| match &l["msg"] {
-                serde_json::Value::Array(a) => a.clone(),
-                m => vec![m.clone()],
-            })
-            .filter(|m| m["id"] == 50 && m["event"]["result"].is_string())
+        let msgs: Vec<serde_json::Value> =
+            include_str!("../../../compat/fixtures/automations/ws.jsonl")
+                .lines()
+                .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+                .flat_map(|l| {
+                    let dir = l["dir"].clone();
+                    let ms = match &l["msg"] {
+                        serde_json::Value::Array(a) => a.clone(),
+                        m => vec![m.clone()],
+                    };
+                    ms.into_iter().map(move |m| json!({"dir": dir, "msg": m}))
+                })
+                .collect();
+        let id = msgs
+            .iter()
+            .find(|m| m["dir"] == "send" && m["msg"]["template"] == tpl)
+            .map(|m| m["msg"]["id"].clone())
+            .expect("the live template is in the recording");
+        let want = msgs
+            .iter()
+            .filter(|m| m["dir"] == "recv")
+            .map(|m| &m["msg"])
+            .filter(|m| m["id"] == id && m["event"]["result"].is_string())
             .map(|m| m["event"]["result"].as_str().unwrap().to_string())
             .collect::<Vec<_>>();
         assert_eq!(want.len(), 7);
@@ -1238,8 +1625,16 @@ mod tests {
         let s = states();
         let l = |t| render(&s, t, &json!({}), false).unwrap().1;
         assert_eq!(l("{{ states.light | list | count }}").domains, ["light"]);
-        let all = l("{{ states | count }}");
-        assert!(all.all && all.matches("anything.at_all"));
+        // Counting only needs entities coming or going; the WS still reports `all`.
+        let count = l("{{ states | count }}");
+        assert!(!count.all && count.all_lifecycle);
+        assert!(!count.matches("light.desk", false) && count.matches("light.new", true));
+        assert_eq!(
+            count.json(),
+            json!({"all": true, "domains": [], "entities": [], "time": false})
+        );
+        let all = l("{% for s in states %}{{ s.state }}{% endfor %}");
+        assert!(all.all && all.matches("anything.at_all", false));
         assert_eq!(all.json()["entities"], json!([]));
         assert!(l("{{ now().year > 2000 }}").time);
         // entity_id doesn't subscribe; other attributes do

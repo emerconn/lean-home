@@ -57,12 +57,18 @@ EOF
 mqtt_jsonl() { jq -cR 'split("\t") | {topic: .[2], payload: (.[3:] | join("\t")), retain: (.[0] == "1"), qos: (.[1] | tonumber)}'; }
 
 # The automations scenario's browser steps, on the same devices plus compat/automations/*.yaml:
-# a live template, automations firing from state and MQTT triggers, a script with delay and
+# a live template, failing ones (errors with and without report_errors, strict mode) and one that renders with
+# an undefined variable, automations firing from state and MQTT triggers, a script with delay and
 # choose, then the frontend's automation, trace and script pages.
 automations_steps() {
   local T="{{ states('sensor.demo_device_temperature') }}|{{ is_state('binary_sensor.demo_device_front_door', 'on') }}|{{ state_attr('light.demo_device_ceiling', 'brightness') }}|{{ states('sensor.missing') | float(0) }}|{{ iif(is_state('switch.demo_device_fan', 'on'), 'fan', 'still') }}"
   cat <<EOF
 [{"sub": {"type": "render_template", "template": $(jq -Rn --arg t "$T" '$t')}},
+ {"sub": {"type": "render_template", "template": "{{ 'abc' | float }}", "report_errors": true}},
+ {"sub": {"type": "render_template", "template": "{{ nope.attr }}", "report_errors": true}},
+ {"sub": {"type": "render_template", "template": "{{ 'abc' | float }}"}},
+ {"sub": {"type": "render_template", "template": "{{ nope }}", "strict": true, "report_errors": true}},
+ {"sub": {"type": "render_template", "template": "{{ nope }} x", "report_errors": true}},
  {"call": ["switch", "turn_on", {"entity_id": "switch.demo_device_fan"}]},
  {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -t lh/button -m press"},
  {"call": ["switch", "turn_off", {"entity_id": "switch.demo_device_fan"}]},

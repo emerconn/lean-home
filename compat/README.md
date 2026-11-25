@@ -41,7 +41,9 @@ trigger that runs a script with a field, and a time trigger at 03:00 with a temp
 never fires during the recording (its entity, config and `automation.turn_off` still are). The
 script turns a light on, waits 1 s and `choose`s by the fan's state. The browser opens a
 `render_template` subscription (`states()`, `is_state`, `state_attr`, `float(0)`, `iif`) that stays
-open while the steps run: fan on (fires the state automation), an MQTT button press (fires the
+open while the steps run, and five that show how HA reports problems: `'abc' | float` with and
+without `report_errors`, `nope.attr` (undefined), `nope` in strict mode, and `{{ nope }} x`
+(renders, with a warning). Then: fan on (fires the state automation), an MQTT button press (fires the
 script), fan off, door open, `automation.trigger` (now blocked by its condition), `script.blink`
 (takes the `default` branch). Then it opens the automation list, editor and trace pages and the
 script list and editor. Same files as `mqtt-discovery`.
@@ -51,6 +53,24 @@ script list and editor. Same files as `mqtt-discovery`.
 
 Re-record with `compat/capture-mqtt.sh automations`. Two recordings differ only in set-ordered data,
 e.g. `render_template`'s `listeners.entities`. Not in CI yet: lean-home doesn't run automations.
+
+## Template cases
+
+`fixtures/templates/cases.jsonl` is every literal template in HA's own template tests
+(`tests/helpers/template/` at `HA_VERSION`), each rendered by HA with the states its test set
+and a frozen clock (2026-11-24 12:00 UTC): the text, the parsed result, the error, the
+listeners and the names it uses. `template_ha_cases.rs` replays them through lean-home.
+Regenerate with:
+
+```bash
+git clone -q --filter=blob:none --sparse --depth 1 --branch "$HA_VERSION" https://github.com/home-assistant/core bench/.work/ha-core-tests
+git -C bench/.work/ha-core-tests sparse-checkout set tests/helpers/template
+docker run --rm -v "$PWD/bench/.work/ha-core-tests/tests/helpers/template:/tests:ro" \
+  -v "$PWD/compat/template-cases.py:/gen.py:ro" --entrypoint python3 "$HA_IMAGE" /gen.py /tests \
+  > compat/fixtures/templates/cases.jsonl
+```
+
+The generator only parses the test files (Python's `ast`); it never runs them.
 
 ## Replay and compare
 

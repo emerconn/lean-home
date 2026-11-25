@@ -42,6 +42,7 @@ All recorded from `HA_IMAGE` with `HA_FRONTEND`; see [`compat/README.md`](../com
 | `compat/fixtures/mqtt-discovery/` | `compat/capture-mqtt.sh` | `MOSQUITTO_IMAGE` |
 | `compat/fixtures/automations/` (`ws.jsonl` etc.) | `compat/capture-mqtt.sh automations` | `MOSQUITTO_IMAGE` |
 | `compat/fixtures/automations/configuration.json` | annotatedyaml in the HA image (command below) | |
+| `compat/fixtures/templates/cases.jsonl` | `compat/template-cases.py` in the HA image, from HA's `tests/helpers/template/` at `HA_VERSION` ([command](../compat/README.md#template-cases)) | The HA Core repo at that tag |
 
 ### Code that follows upstream source
 
@@ -100,6 +101,8 @@ For a new HA release (the others follow from it, except Mosquitto):
      'import json; from pathlib import Path; from annotatedyaml.loader import load_yaml_dict, Secrets; print(json.dumps(load_yaml_dict("/c/configuration.yaml", Secrets(Path("/c"))), indent=2, ensure_ascii=False))' \
      > compat/fixtures/automations/configuration.json
    ```
+   Regenerate the template cases from the new release's tests
+   ([command](../compat/README.md#template-cases)) and diff them too.
 5. **Update the code** for what steps 1–4 turned up, including `mqtt/abbreviations.rs`. Then
    run the replays (`compat/replay.sh` and `compat/compare.py` for each CI scenario) and
    `cargo test --workspace`.
