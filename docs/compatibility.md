@@ -63,6 +63,12 @@ Paths are in the HA Core repository (`github.com/home-assistant/core`), at the `
 
 ## Upgrading
 
+Renovate (`.github/renovate.json5`, weekly) watches the pins: for a new HA release it opens one
+PR bumping `HA_VERSION`, `HA_IMAGE` and `HA_VERSION` in `main.rs` (stable releases only: no
+betas, dev builds or floating tags), and a separate one for Mosquitto. That PR is where the
+upgrade happens: it stays red until the steps below are done on its branch. Renovate doesn't
+bump `HA_FRONTEND` on its own, since it must match the frontend bundled in the HA image.
+
 For a new HA release (the others follow from it, except Mosquitto):
 
 1. **Read what changed.** Diff the source paths above between the two tags, for example:
