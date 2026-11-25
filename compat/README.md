@@ -44,6 +44,9 @@ script), fan off, door open, `automation.trigger` (now blocked by its condition)
 (takes the `default` branch). Then it opens the automation list, editor and trace pages and the
 script list and editor. Same files as `mqtt-discovery`.
 
+`configuration.json` is HA's own loader's result for `compat/automations/configuration.yaml`
+(`annotatedyaml` in the HA image); `config.rs` tests that lean-home's loader gives the same.
+
 Re-record with `compat/capture-mqtt.sh automations`. Two recordings differ only in set-ordered data,
 e.g. `render_template`'s `listeners.entities`. Not in CI yet: lean-home doesn't run automations.
 
