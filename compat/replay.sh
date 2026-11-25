@@ -5,7 +5,7 @@
 # Needs cargo, python3, node with puppeteer-core in bench/.work/node, a Chromium ($CHROMIUM,
 # default /usr/bin/chromium), the hass_frontend dir ($FRONTEND), and for mqtt-discovery docker + jq.
 set -euo pipefail
-ROOT=$(cd "$(dirname "$0")/.." && pwd); SCENARIO=${1:?usage: replay.sh frontend-load|mqtt-discovery}
+ROOT=$(cd "$(dirname "$0")/.." && pwd); . "$ROOT/compat/versions.env"; SCENARIO=${1:?usage: replay.sh frontend-load|mqtt-discovery}
 OUT=$ROOT/bench/.work/replay/$SCENARIO; FIXTURES=$ROOT/compat/fixtures/$SCENARIO
 FRONTEND=${FRONTEND:-$ROOT/bench/.work/hass_frontend}; export CHROMIUM=${CHROMIUM:-/usr/bin/chromium}
 PORT=${PORT:-18200}; URL=http://127.0.0.1:$PORT
@@ -26,7 +26,7 @@ case $SCENARIO in
     . "$ROOT/compat/mqtt-scenario.sh"
     printf 'listener 1883\nallow_anonymous true\n' > "$OUT/mosquitto.conf"
     docker rm -f "$MQ" >/dev/null 2>&1 || true
-    docker run -d --name "$MQ" -p "127.0.0.1:$MQTT_PORT:1883" -v "$OUT/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" eclipse-mosquitto:2 >/dev/null
+    docker run -d --name "$MQ" -p "127.0.0.1:$MQTT_PORT:1883" -v "$OUT/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" "$MOSQUITTO_IMAGE" >/dev/null
     sleep 1
     mqtt_logger > "$OUT/mqtt.tsv" &
     mqtt_responder &

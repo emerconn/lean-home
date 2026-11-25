@@ -3,7 +3,9 @@
 # Needs docker, curl, jq, node and /usr/bin/chromium. Temp files go to bench/.work/ (gitignored).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd); WORK=$ROOT/bench/.work/capture
-IMG=ghcr.io/home-assistant/home-assistant:${HA_VER:-2026.11.2}; PORT=${PORT:-18123}; URL=http://127.0.0.1:$PORT
+. "$ROOT/compat/versions.env"
+# HA_VER tries another release (e.g. while upgrading); the default is the pinned one.
+IMG=${HA_VER:+ghcr.io/home-assistant/home-assistant:$HA_VER}; IMG=${IMG:-$HA_IMAGE}; PORT=${PORT:-18123}; URL=http://127.0.0.1:$PORT
 OUT=$ROOT/compat/fixtures/frontend-load
 
 docker rm -f lh-capture >/dev/null 2>&1 || true

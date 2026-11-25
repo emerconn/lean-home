@@ -8,7 +8,9 @@ set -euo pipefail
 SCENARIO=${1:-mqtt-discovery}
 case $SCENARIO in mqtt-discovery|automations) ;; *) echo "unknown scenario $SCENARIO" >&2; exit 2 ;; esac
 ROOT=$(cd "$(dirname "$0")/.." && pwd); WORK=$ROOT/bench/.work/capture-$SCENARIO
-IMG=ghcr.io/home-assistant/home-assistant:${HA_VER:-2026.11.2}; MQTT_IMG=eclipse-mosquitto:2
+. "$ROOT/compat/versions.env"
+# HA_VER tries another release (e.g. while upgrading); the default is the pinned one.
+IMG=${HA_VER:+ghcr.io/home-assistant/home-assistant:$HA_VER}; IMG=${IMG:-$HA_IMAGE}; MQTT_IMG=$MOSQUITTO_IMAGE
 PORT=${PORT:-18123}; URL=http://127.0.0.1:$PORT; OUT=$ROOT/compat/fixtures/$SCENARIO
 NET=lh-mqtt; HA=lh-mqtt-ha; MQ=lh-mosq
 
