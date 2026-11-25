@@ -48,6 +48,7 @@ pub struct Change {
     pub context: Context,
 }
 
+#[derive(Debug)]
 pub struct States {
     map: Mutex<IndexMap<Arc<str>, Arc<State>>>,
     bus: broadcast::Sender<Arc<Change>>,

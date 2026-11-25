@@ -274,5 +274,39 @@ async fn login_then_websocket() {
         .unwrap();
     assert_eq!(recv(&mut ws).await["error"]["code"], "unknown_command");
 
+    // render_template: acknowledged, rendered, then re-rendered when what it read changes.
+    ws.send(cmd(json!({"id": 4, "type": "render_template",
+        "template": "{{ is_state('switch.fan', 'on') }} {{ states.light.kitchen.state }}"})))
+        .await
+        .unwrap();
+    assert_eq!(recv(&mut ws).await["success"], true);
+    assert_eq!(
+        recv(&mut ws).await["event"],
+        json!({"result": "False on", "listeners": {"all": false, "domains": [],
+            "entities": ["switch.fan", "light.kitchen"], "time": false}})
+    );
+    ws.send(cmd(
+        json!({"id": 5, "type": "call_service", "domain": "switch", "service": "toggle",
+        "service_data": {"entity_id": "switch.fan"}}),
+    ))
+    .await
+    .unwrap();
+    // The entities diff (id 1) and the new render (id 4) come in either order, then the result.
+    let mut by_id = std::collections::HashMap::new();
+    for _ in 0..3 {
+        let m = recv(&mut ws).await;
+        by_id.insert(m["id"].as_u64().unwrap(), m);
+    }
+    assert_eq!(by_id[&4]["event"]["result"], "True on");
+    assert_eq!(by_id[&5]["success"], true);
+    // Results are parsed like HA's: a number stays a number.
+    ws.send(cmd(
+        json!({"id": 6, "type": "render_template", "template": "{{ 1 + 1 }}"}),
+    ))
+    .await
+    .unwrap();
+    recv(&mut ws).await;
+    assert_eq!(recv(&mut ws).await["event"]["result"], 2);
+
     std::fs::remove_dir_all(dir).ok();
 }

@@ -12,7 +12,7 @@ use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use crate::auth::User;
 use crate::state::Change;
-use crate::{App, HA_VERSION, services};
+use crate::{App, HA_VERSION, services, template};
 
 pub async fn upgrade(State(app): State<Arc<App>>, ws: WebSocketUpgrade) -> Response {
     ws.on_upgrade(move |socket| async move {
@@ -25,8 +25,48 @@ enum Sub {
     Entities(Option<Vec<String>>),
     /// `None` = all event types
     Events(Option<String>),
+    Template(Box<TemplateSub>),
     /// Subscriptions whose events we never fire yet; kept so `unsubscribe_events` succeeds.
     Silent,
+}
+
+/// A `render_template` subscription: re-rendered when what it read changes.
+// shortcut: no rate limit (HA: 1/s for domain listeners, 1/min for all states); add if a
+// dashboard iterating all states proves costly.
+struct TemplateSub {
+    template: String,
+    variables: Value,
+    strict: bool,
+    report_errors: bool,
+    listeners: template::Listeners,
+    last: Option<Value>,
+}
+
+impl TemplateSub {
+    /// The event to send, if the result changed (HA sends nothing for an unchanged result).
+    fn refresh(&mut self, states: &Arc<crate::state::States>) -> Option<Value> {
+        match template::render(states, &self.template, &self.variables, self.strict) {
+            Ok((text, listeners)) => {
+                self.listeners = listeners;
+                let r = template::parse_result(&text);
+                if self.last.as_ref() == Some(&r) {
+                    return None;
+                }
+                self.last = Some(r.clone());
+                Some(json!({"result": r, "listeners": self.listeners.json()}))
+            }
+            Err(e) => {
+                // A failed render listens to everything, so it can recover (HA's RenderInfo).
+                self.listeners = template::Listeners {
+                    all: true,
+                    ..Default::default()
+                };
+                self.last = None;
+                self.report_errors
+                    .then(|| json!({"error": e, "level": "ERROR"}))
+            }
+        }
+    }
 }
 
 struct Conn {
@@ -111,6 +151,8 @@ async fn run(app: Arc<App>, mut ws: WebSocket) -> Result<(), axum::Error> {
                 // Lagged: this client can't be brought back in sync cheaply; it resyncs on reconnect.
                 Err(RecvError::Lagged(_) | RecvError::Closed) => return Ok(()),
             },
+            // Templates that use now() re-render at the start of every minute, as in HA.
+            _ = tokio::time::sleep(until_next_minute()), if conn.has_time() => conn.tick(&mut ws).await?,
         }
     }
 }
@@ -150,11 +192,40 @@ const NON_ADMIN_EVENTS: &[&str] = &[
     "floor_registry_updated",
 ];
 
+fn until_next_minute() -> Duration {
+    let ms = chrono::Utc::now().timestamp_millis().rem_euclid(60_000) as u64;
+    Duration::from_millis(60_000 - ms)
+}
+
 impl Conn {
-    async fn forward(&self, ws: &mut WebSocket, change: &Change) -> Result<(), axum::Error> {
+    fn has_time(&self) -> bool {
+        self.subs
+            .values()
+            .any(|s| matches!(s, Sub::Template(t) if t.listeners.time))
+    }
+
+    async fn tick(&mut self, ws: &mut WebSocket) -> Result<(), axum::Error> {
+        for (id, sub) in &mut self.subs {
+            if let Sub::Template(t) = sub
+                && t.listeners.time
+                && let Some(ev) = t.refresh(&self.app.states)
+            {
+                send(ws, &event(*id, ev)).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn forward(&mut self, ws: &mut WebSocket, change: &Change) -> Result<(), axum::Error> {
         // shortcut: serialized per subscriber; serialize once and fan out bytes when many clients matter.
-        for (id, sub) in &self.subs {
+        for (id, sub) in &mut self.subs {
             let ev = match sub {
+                Sub::Template(t) if t.listeners.matches(&change.entity_id) => {
+                    match t.refresh(&self.app.states) {
+                        Some(ev) => ev,
+                        None => continue,
+                    }
+                }
                 Sub::Entities(None) => change.diff(),
                 Sub::Entities(Some(ids)) if ids.iter().any(|i| **i == *change.entity_id) => {
                     change.diff()
@@ -262,19 +333,29 @@ impl Conn {
                 None => vec![error(id, "not_found", "Subscription not found.")],
             },
             "render_template" => {
-                let rendered = render_template(&msg);
-                match rendered {
-                    Ok(r) => {
-                        self.subs.insert(id, Sub::Silent);
-                        let listeners =
-                            json!({"all": false, "entities": [], "domains": [], "time": false});
-                        vec![
-                            result(id, Value::Null),
-                            event(id, json!({"result": r, "listeners": listeners})),
-                        ]
-                    }
-                    Err(e) => vec![error(id, "template_error", &e)],
-                }
+                let Some(tpl) = msg["template"].as_str() else {
+                    return vec![error(
+                        id,
+                        "invalid_format",
+                        "required key not provided @ data['template']",
+                    )];
+                };
+                let mut sub = TemplateSub {
+                    template: tpl.into(),
+                    variables: msg["variables"].clone(),
+                    strict: msg["strict"] == true,
+                    report_errors: msg["report_errors"] == true,
+                    listeners: Default::default(),
+                    last: None,
+                };
+                // HA acknowledges first, then sends the first render.
+                // shortcut: a template that fails to render reports its error once (with
+                // report_errors); HA also logs it during setup, which may add a second event.
+                let first = sub.refresh(&app.states);
+                self.subs.insert(id, Sub::Template(Box::new(sub)));
+                std::iter::once(result(id, Value::Null))
+                    .chain(first.map(|e| event(id, e)))
+                    .collect()
             }
             // Data stores we don't have yet: the frontend treats null as "not set".
             // shortcut: set_user_data/set_system_data stay unknown_command; persist to
@@ -323,17 +404,6 @@ impl Conn {
             _ => vec![error(id, "unknown_command", "Unknown command.")],
         }
     }
-}
-
-/// Only the variables the frontend passes; HA's template globals (`states()`…) come with roadmap step 2.
-fn render_template(msg: &Value) -> Result<String, String> {
-    let mut env = minijinja::Environment::new();
-    if msg["strict"] == true {
-        env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-    }
-    let tpl = msg["template"].as_str().ok_or("template missing")?;
-    env.render_str(tpl, minijinja::value::Serde(&msg["variables"]))
-        .map_err(|e| e.to_string())
 }
 
 /// Panels that need no backend of their own: dashboards the frontend generates from entities.

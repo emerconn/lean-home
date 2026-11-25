@@ -4,6 +4,7 @@ mod mqtt;
 mod registry;
 mod services;
 mod state;
+mod template;
 mod ws;
 
 #[cfg(test)]
@@ -20,7 +21,7 @@ pub const HA_VERSION: &str = "2026.11.2";
 
 pub struct App {
     pub auth: auth::Auth,
-    pub states: state::States,
+    pub states: Arc<state::States>,
     pub index_html: String,
     pub config_dir: PathBuf,
     pub registry: registry::Registry,
@@ -31,7 +32,7 @@ impl App {
     pub fn load(config_dir: &Path, frontend: &Path, demo: bool) -> Result<Self, String> {
         let app = Self {
             auth: auth::Auth::load(config_dir)?,
-            states: state::States::default(),
+            states: Arc::default(),
             index_html: http::render_index(frontend)?,
             config_dir: config_dir.into(),
             registry: registry::Registry::load(config_dir)?,

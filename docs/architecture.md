@@ -161,10 +161,16 @@ to the CI replay.
 1. **Record.** (Done: `compat/capture-mqtt.sh automations`, `compat/fixtures/automations/`.) A scenario: a few automations and scripts in YAML
    (state, time and MQTT triggers; conditions; service calls, delays, `choose`), the frontend's
    automation and script pages, and template rendering (`render_template` with `states()`).
-2. **Templates.** HA's globals and filters on minijinja: `states()`, `is_state`, `state_attr`,
-   `float(0)`/`int(0)` with defaults, `iif`, `is_defined`, `now()`… Use HA's own template tests
-   as cases. This also fixes MQTT value templates that use them (see "Deferred" below) and
-   `render_template` with live listeners.
+2. **Templates.** (Done: `crates/lean-home/src/template.rs`.) HA's globals and filters on
+   minijinja: `states` (call, `states.domain.x`, iteration), `is_state`, `is_state_attr`,
+   `state_attr`, `has_value`, `float`/`int`/`bool` with defaults, `is_number`, `iif`,
+   `is_defined`, `round`, `now()`/`utcnow()`/`as_timestamp`, `to_json`/`from_json`; Python-style
+   output (`True`, `None`, `['a']`) and HA's result parsing. MQTT value and command templates
+   use it, and `render_template` re-renders on the entities, domains or minute it read. Cases
+   come from HA's source and the `automations` recording (the live template's 7 results match in
+   order). The ha-src checkout has no `tests/`, so HA's own template tests are still to mine.
+   Measured on the dev PC: stripped binary +144 KiB (6.32 → 6.47 MB); idle RSS unchanged
+   (~6.6 MB); 200 live `render_template` subscriptions cost ~0.3 MB.
 3. **Config.** Read `configuration.yaml` with HA's tags (`!include`, `!secret`,
    `!include_dir_*`), then `automations.yaml` and `scripts.yaml`.
 4. **Automations and scripts.** Triggers (state, time, MQTT first), conditions, actions; the
@@ -199,7 +205,8 @@ Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the
 
 | Gap | Do it | Why then |
 |---|---|---|
-| Templates have no HA helpers (`states()`, `float(0)`, `is_defined`…), so MQTT value templates using them fail and the message is dropped | Step 2 | One template engine serves automations, scripts and MQTT; build it once there |
+| Template helpers beyond the core set: datetime arithmetic (`timedelta`, `today_at`, `relative_time`), areas/devices/labels, `expand`, regex, `state_translated` | With 2.4, by what automations use | Each is small; add them against HA's tests when a case needs one |
+| `render_template` has no rate limit (HA: 1/s for domain listeners, 1/min for all states) | If a dashboard iterating all states proves costly | Re-rendering on every change is correct, only more work |
 | Registries are read-only: new MQTT entities aren't written to `core.entity_registry` (HA later picks the same ids, normally) | Step 5 | Needed once lean-home renames entities or assigns areas itself, i.e. with config flows; writing HA's file needs care not to corrupt it |
 | HA's opt-in IP ban (`http: login_attempts_threshold`, `ip_bans.yaml`) | With `configuration.yaml` parsing | Off by default in HA too; lean-home already serializes password checks and backs off per IP |
 | MQTT websocket transport | When a user needs it | Rare; brokers behind a reverse proxy |
