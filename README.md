@@ -17,19 +17,26 @@ Goals 1 and 2 are hard requirements. Goal 3 is optimized around them.
 
 ## Status
 
-**Roadmap steps 0 and 1 work.** The official HA 2026.11.2 frontend logs in against lean-home,
-renders the dashboard and controls entities live. Login uses the HA config dir's own
-`.storage/auth*` files, so HA accepts tokens lean-home issues and the reverse. MQTT uses the HA
-config dir's MQTT config entry (plain TCP or TLS) and registries, and discovers lights (default
-and JSON schema), switches, sensors and binary sensors, per component or per device. Replaying a recorded HA session gives the same states,
-registry data and MQTT commands as HA.
-Memory: 0.6 MiB anon idle with MQTT connected, 1.4 MiB with the frontend connected; a 6.3 MB
-release binary (single run each, [measurement rules](docs/architecture.md#measurement-rules)).
+| Roadmap step | Status | What works |
+|---|---|---|
+| 0. Frontend loads | Done | The official HA frontend logs in, renders the dashboard and controls entities live. Login uses the HA config dir's own `.storage/auth*`, so tokens work in both directions |
+| 1. MQTT + discovery | Done | HA's MQTT config entry (TCP or TLS) and registries; lights (default and JSON schema), switches, sensors and binary sensors, discovered per component or per device |
+| 2. Automations, scripts, templates | In progress | **Done:** HA's template helpers (`states()`, `float(0)`, `iif`…) with live `render_template` and MQTT value templates; `configuration.yaml` with HA's tags (`!include`, `!secret`, `!include_dir_*`); the core config and time zone. **Next:** the automation and script engine (2.4) |
+| 3–8. History, `mobile_app`, config flows, Python plugins, more integrations, voice | Not started | See the [roadmap](docs/architecture.md#roadmap) |
+
+Compatibility is checked, not assumed: CI replays sessions recorded from real HA
+(`compat/fixtures/`) against lean-home and diffs every message. The HA, frontend and Mosquitto
+versions it targets (HA 2026.11.2 today) are pinned in [`compat/versions.env`](compat/versions.env);
+[docs/compatibility.md](docs/compatibility.md) says what depends on each and how to upgrade.
+
+Footprint, under the [measurement rules](docs/architecture.md#measurement-rules) (single runs):
+0.6 MiB anon memory idle with MQTT connected and 1.4 MiB with the frontend connected (step 1);
+0.6 MiB idle with a real config loaded, and a 6.7 MB stripped release binary (step 2.3).
 
 ```sh
 # config/ must already be onboarded by HA (lean-home has no onboarding yet); MQTT starts if HA
 # has the MQTT integration set up there. hass_frontend/ comes from the home-assistant-frontend
-# 20261028.6 package. --demo adds three demo entities.
+# package at the HA_FRONTEND version in compat/versions.env. --demo adds three demo entities.
 cargo run --release -- --config config --frontend hass_frontend --listen 0.0.0.0:8123
 ```
 

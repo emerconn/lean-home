@@ -4,7 +4,55 @@
   semanticCommits: "enabled",
   osvVulnerabilityAlerts: true,
   lockFileMaintenance: { enabled: true },
+  // The upstream versions we match (compat/versions.env, docs/compatibility.md). A PR here is the
+  // start of an upgrade, not a drop-in bump: it stays red until the fixtures are re-recorded.
+  customManagers: [
+    // One manager per file: `HA_VERSION=` also appears in main.rs's test of this pin.
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^compat/versions\\.env$/"],
+      matchStrings: [
+        "HA_VERSION=(?<currentValue>\\S+)",
+        "HA_IMAGE=ghcr\\.io/home-assistant/home-assistant:(?<currentValue>\\S+)",
+      ],
+      depNameTemplate: "ghcr.io/home-assistant/home-assistant",
+      datasourceTemplate: "docker",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^crates/lean-home/src/main\\.rs$/"],
+      matchStrings: ['pub const HA_VERSION: &str = "(?<currentValue>[^"]+)";'],
+      depNameTemplate: "ghcr.io/home-assistant/home-assistant",
+      datasourceTemplate: "docker",
+    },
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^compat/versions\\.env$/"],
+      matchStrings: ["MOSQUITTO_IMAGE=eclipse-mosquitto:(?<currentValue>\\S+)"],
+      depNameTemplate: "eclipse-mosquitto",
+      datasourceTemplate: "docker",
+    },
+  ],
   packageRules: [
     { matchManagers: ["github-actions"], semanticCommitType: "ci", groupName: "github actions" },
+    {
+      matchManagers: ["custom.regex"],
+      matchDepNames: ["ghcr.io/home-assistant/home-assistant"],
+      groupName: "home assistant",
+      semanticCommitType: "chore",
+      // Releases only: no betas, dev builds or floating tags like `2026.12`.
+      allowedVersions: "/^\\d{4}\\.\\d{1,2}\\.\\d+$/",
+      prBodyNotes: [
+        "**Upgrade, not a bump.** Follow the checklist in `docs/compatibility.md`: diff the listed HA source paths between the tags, update `HA_FRONTEND` to the frontend bundled in the new image, re-record and diff `compat/fixtures`, regenerate `configuration.json`, and fix what changed. CI's replay fails until the fixtures match the new release.",
+      ],
+    },
+    {
+      matchManagers: ["custom.regex"],
+      matchDepNames: ["eclipse-mosquitto"],
+      semanticCommitType: "chore",
+      prBodyNotes: [
+        "Re-record the two MQTT scenarios (`compat/capture-mqtt.sh`, `compat/capture-mqtt.sh automations`) and check that `mqtt.jsonl` and `broker-subscriptions.txt` changed only in noise (`docs/compatibility.md`).",
+      ],
+    },
   ],
 }
