@@ -32,23 +32,26 @@ jobs:
           files=$(git diff --name-only "${{ github.event.pull_request.base.sha || github.event.before }}" HEAD)
           if grep -qvE '^docs/|\.md$' <<< "$files"; then echo code=true >> "$GITHUB_OUTPUT"; fi
 
-  # Replay the recorded HA sessions (compat/fixtures) against lean-home and diff the results, one job per
-  # scenario in parallel.
-  scenario:
-    name: replay ${{ matrix.scenario }}
+  # Replay the recorded HA sessions (compat/fixtures) against lean-home and diff the results. One job for both
+  # scenarios: as parallel jobs each paid the setup and a cold Chromium, and the total got slower.
+  replay:
     needs: compat-changes
     if: needs.compat-changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        scenario: [frontend-load, mqtt-discovery]
     env:
       FRONTEND: ${{ github.workspace }}/bench/.work/venv/lib/python3/site-packages/hass_frontend
     steps:
       - uses: actions/checkout@v7.0.1
       # rustup reads rust-toolchain.toml on first cargo call, no setup action needed
       - uses: Swatinem/rust-cache@v2.9.3
+      # Downloads only (the frontend wheel, puppeteer-core); the installs still run, from this cache.
+      - uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.npm
+          key: compat-downloads-${{ hashFiles('compat/versions.env') }}
+          restore-keys: compat-downloads-
       - name: Frontend and browser driver
         run: |
           python3 -m venv bench/.work/venv
@@ -59,14 +62,7 @@ jobs:
           test -f "$FRONTEND/index.html"
           npm --prefix bench/.work/node i -s puppeteer-core
           echo "CHROMIUM=$(command -v google-chrome)" >> "$GITHUB_ENV"
-      - run: compat/replay.sh ${{ matrix.scenario }}
-      - run: compat/compare.py ${{ matrix.scenario }} compat/fixtures/${{ matrix.scenario }} bench/.work/replay/${{ matrix.scenario }}
-
-  # The required check: one name whatever the scenarios. always(), or a failed scenario would skip this job,
-  # and a skipped job counts as passed; skipped scenarios (docs-only) pass.
-  replay:
-    needs: scenario
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - run: test "${{ needs.scenario.result }}" = success -o "${{ needs.scenario.result }}" = skipped
+      - run: compat/replay.sh frontend-load
+      - run: compat/compare.py frontend-load compat/fixtures/frontend-load bench/.work/replay/frontend-load
+      - run: compat/replay.sh mqtt-discovery
+      - run: compat/compare.py mqtt-discovery compat/fixtures/mqtt-discovery bench/.work/replay/mqtt-discovery
