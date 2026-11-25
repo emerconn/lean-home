@@ -15,6 +15,10 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 # Debug build: the replay workload is tiny, and the optimised release build costs CI time.
 (cd "$ROOT" && cargo build --locked -q)
 
+# Poll a condition every 0.1 s, at most 5 s, instead of a fixed sleep.
+wait_for() { for _ in $(seq 50); do "$@" && return; sleep 0.1; done; echo "timed out waiting for: $*" >&2; return 1; }
+broker_up() { docker exec "$MQ" mosquitto_pub -i lh-probe -t lh-probe -n 2>/dev/null; }
+subscribed() { [[ $(docker logs "$MQ" 2>&1) == *"$1"* ]]; } # no grep -q pipe: SIGPIPE + pipefail
 cleanup() { kill $(jobs -p) 2>/dev/null || true; docker rm -f "$MQ" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 args=(); STEPS=
@@ -25,14 +29,17 @@ case $SCENARIO in
     ;;
   mqtt-discovery)
     . "$ROOT/compat/mqtt-scenario.sh"
-    printf 'listener 1883\nallow_anonymous true\n' > "$OUT/mosquitto.conf"
+    # log_type subscribe: the waits below read subscriptions from the broker log instead of sleeping.
+    printf 'listener 1883\nallow_anonymous true\nlog_type error\nlog_type warning\nlog_type notice\nlog_type information\nlog_type subscribe\n' > "$OUT/mosquitto.conf"
     docker rm -f "$MQ" >/dev/null 2>&1 || true
     docker run -d --name "$MQ" -p "127.0.0.1:$MQTT_PORT:1883" -v "$OUT/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" "$MOSQUITTO_IMAGE" >/dev/null
-    sleep 1
+    wait_for broker_up
     export MQTT_LOG=$OUT/mqtt.tsv # capture.mjs waits for it to go quiet too
     mqtt_logger > "$MQTT_LOG" &
     mqtt_responder &
-    sleep 1
+    # Both subscribed before the devices publish, so the logger sees every message live.
+    wait_for subscribed 'lh-logger 0 #'
+    wait_for subscribed 'lh-responder 0 lh/+/brightness/set'
     mqtt_devices
     python3 "$ROOT/compat/make-config.py" "$OUT/config" "$FIXTURES" 127.0.0.1 "$MQTT_PORT"
     STEPS=$(mqtt_steps)
@@ -48,7 +55,8 @@ STEPS=${STEPS:-} NODE_PATH=$ROOT/bench/.work/node/node_modules node "$ROOT/compa
 # A clean stop, so the will message HA sends on shutdown is part of what's compared.
 kill -TERM "$LH"; wait "$LH"
 if [ "$SCENARIO" = mqtt-discovery ]; then
-  sleep 1
+  # The last message: the will lean-home sends on shutdown, as HA does.
+  wait_for grep -qP '\thomeassistant/status\toffline$' "$MQTT_LOG"
   mqtt_jsonl < "$OUT/mqtt.tsv" > "$OUT/mqtt.raw.jsonl"
   node "$ROOT/compat/norm.mjs" "$URL" "$OUT/mqtt.raw.jsonl" "$OUT/mqtt.jsonl"
 fi

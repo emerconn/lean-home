@@ -48,27 +48,41 @@ page.on("response", async (res) => {
     req: req.postData() ? parse(req.postData().includes("form-data;") ? JSON.stringify(form(req.postData())) : req.postData()) : undefined, res: body });
 });
 
+// For diagnosing a failed run (CI uploads $out on failure): console output, page errors, failed requests.
+const diag = [];
+page.on("console", (m) => diag.push(`console.${m.type()}: ${m.text()}`));
+page.on("pageerror", (e) => diag.push(`pageerror: ${e.message}`));
+page.on("requestfailed", (r) => diag.push(`requestfailed: ${r.url()} ${r.failure()?.errorText}`));
+
 const cdp = await page.createCDPSession();
 await cdp.send("Network.enable");
 cdp.on("Network.webSocketFrameSent", (e) => { last = Date.now(); ws.push({ dir: "send", msg: parse(e.response.payloadData) }); });
 cdp.on("Network.webSocketFrameReceived", (e) => { last = Date.now(); ws.push({ dir: "recv", msg: parse(e.response.payloadData) }); });
 
-await page.goto(url + "/", { waitUntil: "networkidle2" });
-await page.locator("pierce/input[name=username]").fill("dev");
-await page.locator("pierce/input[name=password]").fill("dev");
-await page.keyboard.press("Enter");
-await page.waitForSelector("pierce/hui-view", { timeout: 60000 });
-await settle(5000);
-for (const step of steps) {
-  if (step.sh) execSync(step.sh, { stdio: "inherit" });
-  // A subscription (e.g. render_template) that stays open, so later updates are recorded too.
-  else if (step.sub) await page.evaluate((m) => { document.querySelector("home-assistant").hass.connection.subscribeMessage(() => {}, m); }, step.sub);
-  // In-app navigation, as the frontend's navigate() does it; a reload would log out.
-  else if (step.nav) await page.evaluate((p) => { history.pushState(null, "", p); window.dispatchEvent(new CustomEvent("location-changed")); }, step.nav);
-  else await page.evaluate((c) => document.querySelector("home-assistant").hass.callService(...c), step.call);
-  await settle(3000);
+try {
+  await page.goto(url + "/", { waitUntil: "networkidle2" });
+  await page.locator("pierce/input[name=username]").fill("dev");
+  await page.locator("pierce/input[name=password]").fill("dev");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("pierce/hui-view", { timeout: 60000 });
+  await settle(5000);
+  for (const step of steps) {
+    if (step.sh) execSync(step.sh, { stdio: "inherit" });
+    // A subscription (e.g. render_template) that stays open, so later updates are recorded too.
+    else if (step.sub) await page.evaluate((m) => { document.querySelector("home-assistant").hass.connection.subscribeMessage(() => {}, m); }, step.sub);
+    // In-app navigation, as the frontend's navigate() does it; a reload would log out.
+    else if (step.nav) await page.evaluate((p) => { history.pushState(null, "", p); window.dispatchEvent(new CustomEvent("location-changed")); }, step.nav);
+    else await page.evaluate((c) => document.querySelector("home-assistant").hass.callService(...c), step.call);
+    await settle(3000);
+  }
+} catch (e) {
+  diag.push(`failed at ${page.url()}: ${e.message}`);
+  writeFileSync(`${out}/failure.log`, diag.join("\n") + "\n");
+  await page.screenshot({ path: `${out}/failure.png` }).catch(() => {});
+  throw e;
+} finally {
+  await browser.close();
 }
-await browser.close();
 
 const jsonl = (a) => a.map((o) => JSON.stringify(o)).join("\n") + "\n";
 writeFileSync(`${out}/http.jsonl`, jsonl(http));
