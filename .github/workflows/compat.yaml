@@ -31,7 +31,8 @@ jobs:
       - name: Frontend and browser driver
         run: |
           python3 -m venv bench/.work/venv
-          bench/.work/venv/bin/pip install -q home-assistant-frontend==20261028.6
+          . compat/versions.env
+          bench/.work/venv/bin/pip install -q "home-assistant-frontend==$HA_FRONTEND"
           # a stable path for FRONTEND, whatever the runner's Python minor version
           ln -s "$(basename bench/.work/venv/lib/python3.*)" bench/.work/venv/lib/python3
           test -f "$FRONTEND/index.html"

@@ -137,6 +137,9 @@ cases. "Compatible" means passing those diffs, not looking right.
 
 ## Roadmap
 
+Each step targets the upstream versions in [compatibility](compatibility.md).
+
+
 0. **Frontend loads**: auth/onboarding, `get_states`, `subscribe_events`, `subscribe_entities`,
    `get_config`, `get_services`, `call_service`, demo entities. This proves the approach.
 1. MQTT + discovery: real devices.
