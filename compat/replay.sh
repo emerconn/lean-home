@@ -44,6 +44,9 @@ case $SCENARIO in
     python3 "$ROOT/compat/make-config.py" "$OUT/config" "$FIXTURES" 127.0.0.1 "$MQTT_PORT"
     if [ "$SCENARIO" = automations ]; then
       cp "$ROOT"/compat/automations/*.yaml "$OUT/config/"
+      # The nightly automation fires at 03:00, which the recording never reached. Near 03:00 UTC,
+      # replay in a zone where it's afternoon (UTC-12) so it doesn't fire mid-scenario.
+      case $(date -u +%H) in 02|03) printf 'homeassistant:\n  time_zone: Etc/GMT+12\n' >> "$OUT/config/configuration.yaml" ;; esac
       STEPS=$(automations_steps)
     else
       STEPS=$(mqtt_steps)
