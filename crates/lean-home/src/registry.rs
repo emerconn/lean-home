@@ -1,15 +1,24 @@
-//! HA's entity and device registries, read from `.storage/core.{entity,device}_registry`.
+//! HA's entity and device registries and config entries, read from
+//! `.storage/core.{entity,device}_registry` and `.storage/core.config_entries`.
 // shortcut: read-only, loaded at startup. Writing them comes when lean-home creates or edits
 // entities itself (config UI).
 
 use std::path::Path;
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 #[derive(Default)]
 pub struct Registry {
     pub entities: Vec<Value>,
     pub devices: Vec<Value>,
+    pub config_entries: Vec<Value>,
+}
+
+/// A stored ISO time as the epoch seconds HA's API sends (`datetime.timestamp()`).
+fn timestamp(v: &Value) -> Value {
+    v.as_str()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map_or(Value::Null, |t| (t.timestamp_micros() as f64 / 1e6).into())
 }
 
 impl Registry {
@@ -29,6 +38,7 @@ impl Registry {
         Ok(Self {
             entities: read("core.entity_registry", "entities")?,
             devices: read("core.device_registry", "devices")?,
+            config_entries: read("core.config_entries", "entries")?,
         })
     }
 
@@ -62,6 +72,66 @@ impl Registry {
 
     pub fn entity_id_taken(&self, entity_id: &str) -> bool {
         self.entities.iter().any(|e| e["entity_id"] == entity_id)
+    }
+
+    /// `config/entity_registry/list`: HA's `as_partial_dict` of every entry, disabled ones too.
+    pub fn list_entities(&self) -> Vec<Value> {
+        self.entities
+            .iter()
+            .map(|e| {
+                let next = match (e["area_id"].is_null(), e["device_id"].is_null()) {
+                    (false, _) => json!("area"),
+                    (true, false) => json!("device"),
+                    _ => Value::Null,
+                };
+                let original = if e["original_name_unprefixed"].is_null() {
+                    &e["original_name"]
+                } else {
+                    &e["original_name_unprefixed"]
+                };
+                json!({
+                    "area_id": e["area_id"], "categories": e.get("categories").cloned().unwrap_or(json!({})),
+                    "config_entry_id": e["config_entry_id"], "config_subentry_id": e["config_subentry_id"],
+                    "created_at": timestamp(&e["created_at"]), "device_id": e["device_id"],
+                    "disabled_by": e["disabled_by"], "entity_category": e["entity_category"],
+                    "entity_id": e["entity_id"], "hidden_by": e["hidden_by"], "icon": e["icon"], "id": e["id"],
+                    "labels": e.get("labels").cloned().unwrap_or(json!([])),
+                    "modified_at": timestamp(&e["modified_at"]), "name": e["name"], "next_name_part": next,
+                    "options": e.get("options").cloned().unwrap_or(json!({})), "original_name": original,
+                    "platform": e["platform"], "translation_key": e["translation_key"], "unique_id": e["unique_id"],
+                })
+            })
+            .collect()
+    }
+
+    /// `config_entries/subscribe`'s first event: each entry as HA's `as_json_fragment`. `loaded`:
+    /// the domains lean-home runs; the others are `not_loaded`.
+    // shortcut: no options, reconfigure, unload or subentry flows yet, so every entry says it
+    // supports none; `type_filter` is ignored (it needs every integration's manifest).
+    pub fn config_entries_event(&self, loaded: &[&str]) -> Value {
+        self.config_entries
+            .iter()
+            .map(|e| {
+                let domain = e["domain"].as_str().unwrap_or_default();
+                let disabled = !e["disabled_by"].is_null();
+                let state = if loaded.contains(&domain) && !disabled {
+                    "loaded"
+                } else {
+                    "not_loaded"
+                };
+                json!({"type": null, "entry": {
+                    "created_at": timestamp(&e["created_at"]), "entry_id": e["entry_id"], "domain": domain,
+                    "modified_at": timestamp(&e["modified_at"]), "title": e["title"], "source": e["source"],
+                    "state": state, "supports_options": false, "supports_remove_device": false,
+                    "supports_unload": false, "supports_reconfigure": false, "supported_subentry_types": {},
+                    "pref_disable_new_entities": e["pref_disable_new_entities"].as_bool().unwrap_or(false),
+                    "pref_disable_polling": e["pref_disable_polling"].as_bool().unwrap_or(false),
+                    "disabled_by": e["disabled_by"], "reason": null, "error_reason_translation_domain": null,
+                    "error_reason_translation_key": null, "error_reason_translation_placeholders": null,
+                    "num_subentries": e["subentries"].as_array().map_or(0, Vec::len),
+                }})
+            })
+            .collect()
     }
 
     /// `config/entity_registry/list_for_display`: HA's compact `_as_display_dict` per enabled entry.

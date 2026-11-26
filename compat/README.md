@@ -52,8 +52,7 @@ script list, editor and trace page. Same files as `mqtt-discovery`.
 (`annotatedyaml` in the HA image); `config.rs` tests that lean-home's loader gives the same.
 
 Re-record with `compat/capture-mqtt.sh automations`. Two recordings differ only in set-ordered data,
-e.g. `render_template`'s `listeners.entities`. In CI; until the automation and script editors are
-built, `compare.py` skips their config requests and the WebSocket commands only they send.
+e.g. `render_template`'s `listeners.entities`. In CI.
 
 ## Template cases
 

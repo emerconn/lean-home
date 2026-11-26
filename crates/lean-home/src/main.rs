@@ -70,7 +70,7 @@ impl App {
     }
 
     /// Loaded components, as HA lists them; the frontend shows features based on this.
-    fn components(&self) -> Vec<&'static str> {
+    pub fn components(&self) -> Vec<&'static str> {
         let mut c = vec![
             "homeassistant",
             "frontend",

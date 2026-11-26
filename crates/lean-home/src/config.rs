@@ -356,6 +356,16 @@ impl Secrets {
     }
 }
 
+/// One YAML file without `!secret` (HA's `util.yaml.load_yaml` with no secrets), as the config
+/// editors read `automations.yaml` and `scripts.yaml`; `None` if it doesn't exist.
+pub fn load_file(path: &Path) -> Result<Option<Value>, String> {
+    match load_yaml(path, None) {
+        Ok(v) => Ok(Some(v)),
+        Err(e) if e.not_found => Ok(None),
+        Err(e) => Err(e.msg),
+    }
+}
+
 /// One YAML file, as JSON. An empty file is null.
 fn load_yaml(path: &Path, secrets: Option<&Secrets>) -> Result<Value, YamlError> {
     let text = std::fs::read_to_string(path).map_err(|e| YamlError {
