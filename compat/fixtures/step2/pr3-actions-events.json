@@ -1,0 +1,699 @@
+{
+  "ha_version": "2026.11.2",
+  "event_triggers": [
+    {
+      "id": "0",
+      "idx": "0",
+      "alias": null,
+      "platform": "event",
+      "event": {
+        "event_type": "custom_test_event",
+        "data": {
+          "kind": "ping",
+          "n": 2
+        },
+        "origin": "LOCAL"
+      },
+      "description": "event 'custom_test_event'"
+    }
+  ],
+  "recorded_events": [
+    {
+      "event_type": "custom_test_event",
+      "data": {
+        "kind": "other",
+        "n": 1
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "custom_test_event",
+      "data": {
+        "kind": "ping",
+        "n": 2
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "kind": "count",
+        "index": 2,
+        "first": false,
+        "last": false
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "kind": "until",
+        "index": 1
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "kind": "for_each",
+        "item": "alpha",
+        "index": 1,
+        "first": true,
+        "last": false
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "kind": "while",
+        "index": 1
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "kind": "while",
+        "index": 2
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "kind": "for_each",
+        "item": "beta",
+        "index": 2,
+        "first": false,
+        "last": true
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "kind": "count",
+        "index": 3,
+        "first": false,
+        "last": true
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "kind": "count",
+        "index": 1,
+        "first": true,
+        "last": false
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "step": "par_2a"
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "step": "seq_1"
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "kind": "until",
+        "index": 2
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "step": "par_2b"
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "step": "seq_2"
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "step": "par_1"
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "completed": true,
+        "remaining": null
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "after_timeout": true,
+        "completed": false,
+        "remaining": 0.0
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "completed": true,
+        "trigger_platform": "state",
+        "trigger_to": "on"
+      },
+      "origin": "LOCAL"
+    },
+    {
+      "event_type": "log_step",
+      "data": {
+        "completed": false,
+        "trigger_is_none": true
+      },
+      "origin": "LOCAL"
+    }
+  ],
+  "scripts": [
+    {
+      "name": "event_action",
+      "result": "ScriptRunResult(conversation_response=<UndefinedType._singleton: 0>, service_response=None, variables={'context': <homeassistant.core.Context object at 0x7fba8ad2d670>})",
+      "trace": {
+        "extended_dict": {
+          "last_step": null,
+          "run_id": "db1e62ab40cad582e2070f93435493a6",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:24.790074+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.event_action",
+          "trace": {},
+          "config": {
+            "sequence": [
+              {
+                "event": "custom_test_event",
+                "event_data": {
+                  "kind": "other",
+                  "n": 1
+                }
+              },
+              {
+                "event": "custom_test_event",
+                "event_data": {
+                  "kind": "ping",
+                  "n": 2
+                }
+              }
+            ]
+          },
+          "blueprint_inputs": null,
+          "context": "<homeassistant.core.Context object at 0x7fba8ad2d670>"
+        },
+        "short_dict": {
+          "last_step": null,
+          "run_id": "db1e62ab40cad582e2070f93435493a6",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:24.790074+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.event_action"
+        }
+      }
+    },
+    {
+      "name": "repeat_variants",
+      "result": "ScriptRunResult(conversation_response=<UndefinedType._singleton: 0>, service_response=None, variables={'context': <homeassistant.core.Context object at 0x7fba419fbfb0>})",
+      "trace": {
+        "extended_dict": {
+          "last_step": null,
+          "run_id": "1c4804199bdde8ef6864664b3a6466ba",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.333937+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.repeat_variants",
+          "trace": {},
+          "config": {
+            "sequence": [
+              {
+                "repeat": {
+                  "count": 3,
+                  "sequence": [
+                    {
+                      "event": "log_step",
+                      "event_data": {
+                        "kind": "count",
+                        "index": "{{ repeat.index }}",
+                        "first": "{{ repeat.first }}",
+                        "last": "{{ repeat.last }}"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "repeat": {
+                  "for_each": [
+                    "alpha",
+                    "beta"
+                  ],
+                  "sequence": [
+                    {
+                      "event": "log_step",
+                      "event_data": {
+                        "kind": "for_each",
+                        "item": "{{ repeat.item }}",
+                        "index": "{{ repeat.index }}",
+                        "first": "{{ repeat.first }}",
+                        "last": "{{ repeat.last }}"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "repeat": {
+                  "while": [
+                    {
+                      "condition": "template",
+                      "value_template": "{{ repeat.index <= 2 }}"
+                    }
+                  ],
+                  "sequence": [
+                    {
+                      "event": "log_step",
+                      "event_data": {
+                        "kind": "while",
+                        "index": "{{ repeat.index }}"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "repeat": {
+                  "until": [
+                    {
+                      "condition": "template",
+                      "value_template": "{{ repeat.index >= 2 }}"
+                    }
+                  ],
+                  "sequence": [
+                    {
+                      "event": "log_step",
+                      "event_data": {
+                        "kind": "until",
+                        "index": "{{ repeat.index }}"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "blueprint_inputs": null,
+          "context": "<homeassistant.core.Context object at 0x7fba419fbfb0>"
+        },
+        "short_dict": {
+          "last_step": null,
+          "run_id": "1c4804199bdde8ef6864664b3a6466ba",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.333937+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.repeat_variants"
+        }
+      }
+    },
+    {
+      "name": "sequence_and_parallel",
+      "result": "ScriptRunResult(conversation_response=<UndefinedType._singleton: 0>, service_response=None, variables={'context': <homeassistant.core.Context object at 0x7fba444da110>})",
+      "trace": {
+        "extended_dict": {
+          "last_step": null,
+          "run_id": "b68067c655fc3599f85efa0cc9b24618",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.338473+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.sequence_and_parallel",
+          "trace": {},
+          "config": {
+            "sequence": [
+              {
+                "alias": "Explicit sequence",
+                "sequence": [
+                  {
+                    "event": "log_step",
+                    "event_data": {
+                      "step": "seq_1"
+                    }
+                  },
+                  {
+                    "event": "log_step",
+                    "event_data": {
+                      "step": "seq_2"
+                    }
+                  }
+                ]
+              },
+              {
+                "alias": "Parallel branches",
+                "parallel": [
+                  {
+                    "event": "log_step",
+                    "event_data": {
+                      "step": "par_1"
+                    }
+                  },
+                  {
+                    "sequence": [
+                      {
+                        "event": "log_step",
+                        "event_data": {
+                          "step": "par_2a"
+                        }
+                      },
+                      {
+                        "event": "log_step",
+                        "event_data": {
+                          "step": "par_2b"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "blueprint_inputs": null,
+          "context": "<homeassistant.core.Context object at 0x7fba444da110>"
+        },
+        "short_dict": {
+          "last_step": null,
+          "run_id": "b68067c655fc3599f85efa0cc9b24618",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.338473+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.sequence_and_parallel"
+        }
+      }
+    },
+    {
+      "name": "wait_template_immediate",
+      "result": "ScriptRunResult(conversation_response=<UndefinedType._singleton: 0>, service_response=None, variables={'context': <homeassistant.core.Context object at 0x7fba42ff8a40>, 'wait': {'remaining': None, 'completed': True}})",
+      "trace": {
+        "extended_dict": {
+          "last_step": null,
+          "run_id": "bd756132f5b5a352a0382f1c18fdf8d6",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.340489+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_template_immediate",
+          "trace": {},
+          "config": {
+            "sequence": [
+              {
+                "wait_template": "{{ is_state('binary_sensor.door', 'off') }}"
+              },
+              {
+                "event": "log_step",
+                "event_data": {
+                  "completed": "{{ wait.completed }}",
+                  "remaining": "{{ wait.remaining }}"
+                }
+              }
+            ]
+          },
+          "blueprint_inputs": null,
+          "context": "<homeassistant.core.Context object at 0x7fba42ff8a40>"
+        },
+        "short_dict": {
+          "last_step": null,
+          "run_id": "bd756132f5b5a352a0382f1c18fdf8d6",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.340489+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_template_immediate"
+        }
+      }
+    },
+    {
+      "name": "wait_template_timeout_continue",
+      "result": "ScriptRunResult(conversation_response=<UndefinedType._singleton: 0>, service_response=None, variables={'context': <homeassistant.core.Context object at 0x7fba42ff9620>, 'wait': {'remaining': 0.0, 'completed': False}})",
+      "trace": {
+        "extended_dict": {
+          "last_step": null,
+          "run_id": "7c0e053a47ab08cd19ade65afadc0e49",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.341187+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_template_timeout_continue",
+          "trace": {},
+          "config": {
+            "sequence": [
+              {
+                "wait_template": "{{ is_state('binary_sensor.door', 'on') }}",
+                "timeout": {
+                  "milliseconds": 50
+                },
+                "continue_on_timeout": true
+              },
+              {
+                "event": "log_step",
+                "event_data": {
+                  "after_timeout": true,
+                  "completed": "{{ wait.completed }}",
+                  "remaining": "{{ wait.remaining }}"
+                }
+              }
+            ]
+          },
+          "blueprint_inputs": null,
+          "context": "<homeassistant.core.Context object at 0x7fba42ff9620>"
+        },
+        "short_dict": {
+          "last_step": null,
+          "run_id": "7c0e053a47ab08cd19ade65afadc0e49",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.341187+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_template_timeout_continue"
+        }
+      }
+    },
+    {
+      "name": "wait_template_timeout_abort",
+      "result": "ScriptRunResult(conversation_response=<UndefinedType._singleton: 0>, service_response=None, variables={'context': <homeassistant.core.Context object at 0x7fba42ff97b0>, 'wait': {'remaining': 0.0, 'completed': False}})",
+      "trace": {
+        "extended_dict": {
+          "last_step": null,
+          "run_id": "1825b04908927ea8847e43cb2a0beabf",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.392357+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_template_timeout_abort",
+          "trace": {},
+          "config": {
+            "sequence": [
+              {
+                "wait_template": "{{ is_state('binary_sensor.door', 'on') }}",
+                "timeout": {
+                  "milliseconds": 50
+                },
+                "continue_on_timeout": false
+              },
+              {
+                "event": "log_step",
+                "event_data": {
+                  "should_not_run": true
+                }
+              }
+            ]
+          },
+          "blueprint_inputs": null,
+          "context": "<homeassistant.core.Context object at 0x7fba42ff97b0>"
+        },
+        "short_dict": {
+          "last_step": null,
+          "run_id": "1825b04908927ea8847e43cb2a0beabf",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.392357+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_template_timeout_abort"
+        }
+      }
+    },
+    {
+      "name": "wait_for_trigger_matched",
+      "result": "ScriptRunResult(conversation_response=<UndefinedType._singleton: 0>, service_response=None, variables={'context': <homeassistant.core.Context object at 0x7fba417e6110>, 'wait': {'remaining': 1.9488852890008275, 'completed': True, 'trigger': {'id': '0', 'idx': '0', 'alias': None, 'platform': 'state', 'entity_id': 'binary_sensor.door', 'from_state': <state binary_sensor.door=off @ 2026-11-26T08:22:25.338898+00:00>, 'to_state': <state binary_sensor.door=on @ 2026-11-26T08:22:25.495177+00:00>, 'for': None, 'attribute': None, 'description': 'state of binary_sensor.door'}}})",
+      "trace": {
+        "extended_dict": {
+          "last_step": null,
+          "run_id": "83365a195fa2f40a45defe1f28b375da",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.444045+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_for_trigger_matched",
+          "trace": {},
+          "config": {
+            "sequence": [
+              {
+                "wait_for_trigger": [
+                  {
+                    "trigger": "state",
+                    "entity_id": "binary_sensor.door",
+                    "to": "on"
+                  }
+                ],
+                "timeout": {
+                  "seconds": 2
+                }
+              },
+              {
+                "event": "log_step",
+                "event_data": {
+                  "completed": "{{ wait.completed }}",
+                  "trigger_platform": "{{ wait.trigger.platform }}",
+                  "trigger_to": "{{ wait.trigger.to_state.state }}"
+                }
+              }
+            ]
+          },
+          "blueprint_inputs": null,
+          "context": "<homeassistant.core.Context object at 0x7fba417e6110>"
+        },
+        "short_dict": {
+          "last_step": null,
+          "run_id": "83365a195fa2f40a45defe1f28b375da",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.444045+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_for_trigger_matched"
+        }
+      }
+    },
+    {
+      "name": "wait_for_trigger_timeout",
+      "result": "ScriptRunResult(conversation_response=<UndefinedType._singleton: 0>, service_response=None, variables={'context': <homeassistant.core.Context object at 0x7fba417e6340>, 'wait': {'remaining': 0.0, 'completed': False, 'trigger': None}})",
+      "trace": {
+        "extended_dict": {
+          "last_step": null,
+          "run_id": "c331015368be36f73cd5d8abd34c8915",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.496454+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_for_trigger_timeout",
+          "trace": {},
+          "config": {
+            "sequence": [
+              {
+                "wait_for_trigger": [
+                  {
+                    "trigger": "state",
+                    "entity_id": "binary_sensor.door",
+                    "to": "off"
+                  }
+                ],
+                "timeout": {
+                  "milliseconds": 50
+                },
+                "continue_on_timeout": true
+              },
+              {
+                "event": "log_step",
+                "event_data": {
+                  "completed": "{{ wait.completed }}",
+                  "trigger_is_none": "{{ wait.trigger is none }}"
+                }
+              }
+            ]
+          },
+          "blueprint_inputs": null,
+          "context": "<homeassistant.core.Context object at 0x7fba417e6340>"
+        },
+        "short_dict": {
+          "last_step": null,
+          "run_id": "c331015368be36f73cd5d8abd34c8915",
+          "state": "running",
+          "script_execution": null,
+          "timestamp": {
+            "start": "2026-11-26T08:22:25.496454+00:00",
+            "finish": null
+          },
+          "domain": "script",
+          "item_id": "script.wait_for_trigger_timeout"
+        }
+      }
+    }
+  ]
+}

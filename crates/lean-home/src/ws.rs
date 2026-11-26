@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 use crate::auth::User;
-use crate::state::Change;
+use crate::state::{Change, Event};
 use crate::{App, HA_VERSION, services, template};
 
 pub async fn upgrade(State(app): State<Arc<App>>, ws: WebSocketUpgrade) -> Response {
@@ -158,6 +158,7 @@ async fn run(app: Arc<App>, mut ws: WebSocket) -> Result<(), axum::Error> {
     .await?;
 
     let (mut rx, _) = app.states.subscribe();
+    let mut ev_rx = app.states.subscribe_events();
     let (later, mut later_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut conn = Conn {
         app,
@@ -183,11 +184,21 @@ async fn run(app: Arc<App>, mut ws: WebSocket) -> Result<(), axum::Error> {
                         Err(_) => return Ok(()),
                     }
                 }
+                loop {
+                    match ev_rx.try_recv() {
+                        Ok(ev) => conn.forward_event(&mut ws, &ev).await?,
+                        Err(TryRecvError::Empty) => break,
+                        Err(_) => return Ok(()),
+                    }
+                }
                 let msg: Value = serde_json::from_str(&text).unwrap_or_default();
                 for reply in conn.handle(msg) {
                     // A state change caused by this command (call_service) goes out before its result.
                     while let Ok(change) = rx.try_recv() {
                         conn.forward(&mut ws, &change).await?;
+                    }
+                    while let Ok(ev) = ev_rx.try_recv() {
+                        conn.forward_event(&mut ws, &ev).await?;
                     }
                     send(&mut ws, &reply).await?;
                 }
@@ -197,11 +208,18 @@ async fn run(app: Arc<App>, mut ws: WebSocket) -> Result<(), axum::Error> {
                 while let Ok(change) = rx.try_recv() {
                     conn.forward(&mut ws, &change).await?;
                 }
+                while let Ok(ev) = ev_rx.try_recv() {
+                    conn.forward_event(&mut ws, &ev).await?;
+                }
                 send(&mut ws, &reply).await?;
             }
             change = rx.recv() => match change {
                 Ok(change) => conn.forward(&mut ws, &change).await?,
                 // Lagged: this client can't be brought back in sync cheaply; it resyncs on reconnect.
+                Err(RecvError::Lagged(_) | RecvError::Closed) => return Ok(()),
+            },
+            ev = ev_rx.recv() => match ev {
+                Ok(ev) => conn.forward_event(&mut ws, &ev).await?,
                 Err(RecvError::Lagged(_) | RecvError::Closed) => return Ok(()),
             },
             // Templates that use now() re-render at the start of every minute, as in HA.
@@ -301,6 +319,19 @@ impl Conn {
                 _ => continue,
             };
             send(ws, &event(*id, ev)).await?;
+        }
+        Ok(())
+    }
+
+    async fn forward_event(&mut self, ws: &mut WebSocket, ev: &Event) -> Result<(), axum::Error> {
+        for (id, sub) in &self.subs {
+            match sub {
+                Sub::Events(None) => send(ws, &event(*id, ev.json())).await?,
+                Sub::Events(Some(t)) if t == &ev.event_type => {
+                    send(ws, &event(*id, ev.json())).await?;
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -435,6 +466,22 @@ impl Conn {
                 Some(_) => ok(Value::Null),
                 None => vec![error(id, "not_found", "Subscription not found.")],
             },
+            "fire_event" => {
+                if !self.user.is_admin {
+                    return vec![error(id, "unauthorized", "Unauthorized")];
+                }
+                let Some(et) = msg["event_type"].as_str() else {
+                    return vec![error(
+                        id,
+                        "invalid_format",
+                        "required key not provided @ data['event_type']",
+                    )];
+                };
+                let data = msg["event_data"].as_object().cloned().unwrap_or_default();
+                let ctx = crate::state::Context::new(Some(self.user.id.clone()));
+                app.states.fire_event(et, data, ctx.clone());
+                ok(json!({"context": ctx.json()}))
+            }
             "render_template" => {
                 let Some(tpl) = msg["template"].as_str() else {
                     return vec![error(

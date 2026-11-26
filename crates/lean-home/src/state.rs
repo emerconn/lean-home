@@ -49,10 +49,34 @@ pub struct Change {
     pub context: Context,
 }
 
+/// A general HA event (`homeassistant.core.Event`).
+#[derive(Clone, Debug)]
+pub struct Event {
+    pub event_type: String,
+    pub data: Map<String, Value>,
+    pub origin: String,
+    pub time_fired: DateTime<Utc>,
+    pub context: Context,
+}
+
+impl Event {
+    /// `Event.as_dict()`
+    pub fn json(&self) -> Value {
+        json!({
+            "event_type": self.event_type,
+            "data": self.data,
+            "origin": self.origin,
+            "time_fired": iso(self.time_fired),
+            "context": self.context.json(),
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct States {
     map: Mutex<IndexMap<Arc<str>, Arc<State>>>,
     bus: broadcast::Sender<Arc<Change>>,
+    events: broadcast::Sender<Arc<Event>>,
 }
 
 impl Default for States {
@@ -61,6 +85,7 @@ impl Default for States {
         Self {
             map: Mutex::default(),
             bus: broadcast::channel(1024).0,
+            events: broadcast::channel(1024).0,
         }
     }
 }
@@ -146,6 +171,29 @@ impl States {
     pub fn subscribe(&self) -> (broadcast::Receiver<Arc<Change>>, Vec<Arc<State>>) {
         let map = self.map.lock().unwrap();
         (self.bus.subscribe(), map.values().cloned().collect())
+    }
+
+    /// Fire a general event on the bus (`hass.bus.async_fire`).
+    pub fn fire_event(
+        &self,
+        event_type: impl Into<String>,
+        data: Map<String, Value>,
+        context: Context,
+    ) -> Arc<Event> {
+        let ev = Arc::new(Event {
+            event_type: event_type.into(),
+            data,
+            origin: "LOCAL".into(),
+            time_fired: Utc::now(),
+            context,
+        });
+        let _ = self.events.send(ev.clone());
+        ev
+    }
+
+    /// Subscribe to general events on the bus.
+    pub fn subscribe_events(&self) -> broadcast::Receiver<Arc<Event>> {
+        self.events.subscribe()
     }
 }
 
