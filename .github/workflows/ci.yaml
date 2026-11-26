@@ -66,10 +66,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Build
+      - uses: docker/setup-buildx-action@v4.4.1
+      - id: versions
         run: |
           . compat/versions.env
-          docker build --build-arg HA_FRONTEND="$HA_FRONTEND" -t lean-home:ci .
+          echo "ha_frontend=$HA_FRONTEND" >> "$GITHUB_OUTPUT"
+      - name: Build
+        uses: docker/build-push-action@v7.4.0
+        with:
+          load: true
+          provenance: false
+          tags: lean-home:ci
+          build-args: HA_FRONTEND=${{ steps.versions.outputs.ha_frontend }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Smoke test
         run: |
           # A throwaway config with HA's auth files, as the replay uses.

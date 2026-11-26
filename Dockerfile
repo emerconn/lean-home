@@ -9,10 +9,18 @@
 FROM rust:1.100.0-alpine AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /src
-COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --release --locked && strip -o /lean-home target/release/lean-home
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates/lean-home/Cargo.toml crates/lean-home/Cargo.toml
+# Pre-build dependencies in their own layer so code changes only recompile lean-home
+# (GHA layer caching persists image layers, not BuildKit cache mounts).
+RUN mkdir -p crates/lean-home/src \
+ && echo 'fn main() {}' > crates/lean-home/src/main.rs \
+ && cargo build --release --locked \
+ && rm -rf crates/lean-home/src target/release/.fingerprint/lean-home-* target/release/deps/lean_home* target/release/lean-home*
+COPY crates ./crates
+RUN cargo build --release --locked --offline \
+ && strip -o /lean-home target/release/lean-home \
+ && rm -rf target
 
 # The frontend from the pinned home-assistant-frontend wheel (pure data, no Python needed at run
 # time). Dropped: the source maps and the ES5 build for old browsers (both unused by current
