@@ -62,6 +62,9 @@ mqtt_jsonl() { jq -cR 'split("\t") | {topic: .[2], payload: (.[3:] | join("\t"))
 # a live template, failing ones (errors with and without report_errors, strict mode) and one that renders with
 # an undefined variable, automations firing from state and MQTT triggers, a script with delay and
 # choose, then the frontend's automation, trace and script pages (with the script's traces).
+# Then the editors save, as their Save buttons do (REST): the nightly automation moves to 04:00, a
+# new automation is added and fired, a new script is added and run, then both are deleted and one
+# is read back (404). The files HA writes are kept as fixtures.
 # The sleep lets the script the button starts finish its 1 s delay before the fan turns off, as it
 # did in the recording: the quiet window (capture.mjs) is shorter than the delay.
 automations_steps() {
@@ -87,6 +90,14 @@ automations_steps() {
  {"nav": "/config/automation/trace/1700000000001"},
  {"nav": "/config/script/dashboard"},
  {"nav": "/config/script/edit/blink"},
- {"nav": "/config/script/trace/blink"}]
+ {"nav": "/config/script/trace/blink"},
+ {"api": ["POST", "config/automation/config/1700000000003", {"alias": "Nightly off", "description": "Time trigger, moved to 04:00 in the editor", "triggers": [{"trigger": "time", "at": "04:00:00"}], "conditions": [{"condition": "template", "value_template": "{{ states('sensor.demo_device_temperature') | float(0) < 30 }}"}], "actions": [{"action": "light.turn_off", "target": {"entity_id": ["light.demo_device_ceiling", "light.demo_device_desk"]}}], "mode": "single"}]},
+ {"api": ["POST", "config/automation/config/1700000000004", {"alias": "Door closed desk on", "description": "Added in the editor", "triggers": [{"trigger": "state", "entity_id": "binary_sensor.demo_device_front_door", "to": "off"}], "conditions": [], "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.demo_device_desk"}}], "mode": "single"}]},
+ {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -r -t lh/door/state -m OFF"},
+ {"api": ["POST", "config/script/config/wave", {"alias": "Wave", "sequence": [{"action": "light.toggle", "target": {"entity_id": "light.demo_device_ceiling"}}], "mode": "single"}]},
+ {"call": ["script", "wave", {}]},
+ {"api": ["DELETE", "config/automation/config/1700000000004"]},
+ {"api": ["DELETE", "config/script/config/wave"]},
+ {"api": ["GET", "config/automation/config/1700000000004"]}]
 EOF
 }

@@ -46,13 +46,28 @@ without `report_errors`, `nope.attr` (undefined), `nope` in strict mode, and `{{
 (renders, with a warning). Then: fan on (fires the state automation), an MQTT button press (fires the
 script), fan off, door open, `automation.trigger` (now blocked by its condition), `script.blink`
 (takes the `default` branch). Then it opens the automation list, editor and trace pages and the
-script list, editor and trace page. Same files as `mqtt-discovery`.
+script list, editor and trace page. Last, the editors save over REST, as their Save buttons do:
+the nightly automation moves to 04:00, a new automation is added and fired by the door closing, a
+new script is added and run, both are deleted, and one is read back (404). Same files as
+`mqtt-discovery`, plus `automations.saved.yaml` and `scripts.saved.yaml`: the files HA wrote.
 
 `configuration.json` is HA's own loader's result for `compat/automations/configuration.yaml`
 (`annotatedyaml` in the HA image); `config.rs` tests that lean-home's loader gives the same.
 
 Re-record with `compat/capture-mqtt.sh automations`. Two recordings differ only in set-ordered data,
 e.g. `render_template`'s `listeners.entities`. In CI.
+
+## YAML dump cases
+
+`fixtures/yaml-dump/cases.jsonl` is HA's own YAML dumper (annotatedyaml's `dump`, as the config
+editors write `automations.yaml` and `scripts.yaml`) run over tricky values: YAML 1.1 words and
+numbers that must be quoted, indicators, quotes, Unicode, line breaks, folding at 80 columns.
+`yaml_dump.rs` must write the same. Regenerate with:
+
+```bash
+docker run --rm -i --entrypoint python3 "$HA_IMAGE" - < compat/yaml-dump-cases.py \
+  > compat/fixtures/yaml-dump/cases.jsonl
+```
 
 ## Template cases
 

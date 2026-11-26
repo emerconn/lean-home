@@ -670,6 +670,37 @@ fn find_yaml_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Whether PyYAML reads `s`, written plain, back as a string: what decides whether the dumper
+/// must quote it. Its resolver also knows `=` and `<<`, and reads any run of digits as an int,
+/// however long.
+pub(crate) fn plain_is_str(s: &str) -> bool {
+    let (_, digits) = split_sign(s);
+    let decimal = digits.starts_with(|c: char| ('1'..='9').contains(&c))
+        && digits.chars().all(|c| c.is_ascii_digit() || c == '_');
+    let special = matches!(resolve_plain(s), Value::Null | Value::Bool(_))
+        || matches!(
+            s,
+            "=" | "<<"
+                | ".inf"
+                | ".Inf"
+                | ".INF"
+                | "+.inf"
+                | "+.Inf"
+                | "+.INF"
+                | "-.inf"
+                | "-.Inf"
+                | "-.INF"
+                | ".nan"
+                | ".NaN"
+                | ".NAN"
+        );
+    !(special
+        || decimal
+        || yaml11_int(s).is_some()
+        || yaml11_float(s).is_some()
+        || yaml11_timestamp(s).is_some())
+}
+
 /// PyYAML's implicit resolvers (YAML 1.1) for an untagged plain scalar.
 fn resolve_plain(s: &str) -> Value {
     match s {

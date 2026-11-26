@@ -1486,6 +1486,10 @@ mod tests {
             (ceiling, "on", json!({"brightness": 76})), // the script turns it on again: no change
             (fan, "on", json!({})),
             (t, "22.0", json!({})),
+            // the editors' steps: the door closes (firing the new automation), `script.wave`
+            // toggles the ceiling off
+            (door, "off", json!({})),
+            (ceiling, "off", json!({"brightness": null})),
         ] {
             set(id, st, a);
             render_if_changed();
@@ -1515,7 +1519,7 @@ mod tests {
             .filter(|m| m["id"] == id && m["event"]["result"].is_string())
             .map(|m| m["event"]["result"].as_str().unwrap().to_string())
             .collect::<Vec<_>>();
-        assert_eq!(want.len(), 7);
+        assert_eq!(want.len(), 9);
         assert_eq!(got, want);
     }
 

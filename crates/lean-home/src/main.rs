@@ -2,6 +2,7 @@ mod auth;
 mod automation;
 mod condition;
 mod config;
+mod editor;
 mod http;
 mod mqtt;
 mod registry;
@@ -11,6 +12,7 @@ mod state;
 mod template;
 mod trace;
 mod ws;
+mod yaml_dump;
 
 #[cfg(test)]
 mod e2e_tests;

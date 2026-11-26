@@ -66,6 +66,12 @@ rm -f "$OUT/index.html" # same page as frontend-load
 
 # Stopping HA flushes its delayed .storage writes.
 docker stop "$HA" >/dev/null
+# The files the editors saved (the automations scenario's last steps), as HA wrote them.
+if [ "$SCENARIO" = automations ]; then
+  for f in automations scripts; do
+    docker run --rm -v "$WORK/config:/c:ro" --entrypoint cat "$IMG" "/c/$f.yaml" > "$OUT/$f.saved.yaml"
+  done
+fi
 for f in core.config_entries core.entity_registry core.device_registry; do
   docker run --rm -v "$WORK/config:/c:ro" --entrypoint cat "$IMG" "/c/.storage/$f" > "$WORK/$f"
   node "$ROOT/compat/norm.mjs" "$URL" "$WORK/$f" "$OUT/$f.json"

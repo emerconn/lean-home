@@ -30,4 +30,9 @@
 {"topic":"lh/switch1/set","payload":"ON","retain":false,"qos":0}
 {"topic":"lh/switch1/state","payload":"ON","retain":true,"qos":0}
 {"topic":"lh/sensor1/state","payload":"{\"temperature\":22.0}","retain":true,"qos":0}
+{"topic":"lh/door/state","payload":"OFF","retain":true,"qos":0}
+{"topic":"lh/light2/set","payload":"{\"state\":\"ON\"}","retain":false,"qos":0}
+{"topic":"lh/light2/state","payload":"{\"state\":\"ON\",\"color_mode\":\"brightness\"}","retain":true,"qos":0}
+{"topic":"lh/light1/set","payload":"OFF","retain":false,"qos":0}
+{"topic":"lh/light1/state","payload":"OFF","retain":true,"qos":0}
 {"topic":"homeassistant/status","payload":"offline","retain":false,"qos":0}
