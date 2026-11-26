@@ -47,9 +47,27 @@ async fn http(
     content_type: &str,
     body: &str,
 ) -> (u16, String) {
+    request(
+        addr,
+        method,
+        path,
+        &format!("Content-Type: {content_type}\r\n"),
+        body,
+    )
+    .await
+}
+
+/// `http` with any headers, each ending in CRLF.
+async fn request(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: &str,
+    body: &str,
+) -> (u16, String) {
     let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
     let req = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n{body}",
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{headers}Content-Length: {}\r\n\r\n{body}",
         body.len()
     );
     s.write_all(req.as_bytes()).await.unwrap();
@@ -66,6 +84,12 @@ async fn login_then_websocket() {
     std::fs::write(
         dir.join("config/configuration.yaml"),
         "script:\n  hello:\n    sequence:\n      - action: switch.turn_on\n        target:\n          entity_id: switch.fan\n",
+    )
+    .unwrap();
+    // What the editors read: automations.yaml and scripts.yaml, whether included or not.
+    std::fs::write(
+        dir.join("config/automations.yaml"),
+        "- id: '17'\n  alias: Seventeen\n  triggers: []\n  actions: []\n",
     )
     .unwrap();
     let app = Arc::new(crate::App::load(&dir.join("config"), &dir.join("frontend"), true).unwrap());
@@ -353,6 +377,72 @@ async fn login_then_websocket() {
         t["result"]["trace"]["sequence/0"][0]["result"]["params"]["service"],
         "turn_on"
     );
+
+    // The automation editor's REST reads: admins only, by id, from automations.yaml as written.
+    let get = |path: &str, token: Option<&str>| {
+        let h = token.map_or(String::new(), |t| format!("Authorization: Bearer {t}\r\n"));
+        let path = path.to_string();
+        async move { request(addr, "GET", &path, &h, "").await }
+    };
+    let auto = "/api/config/automation/config/17";
+    assert_eq!(get(auto, None).await.0, 401);
+    assert_eq!(get(auto, Some("x.y.z")).await.0, 401);
+    let (status, body) = get(auto, Some(access)).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({"id": "17", "alias": "Seventeen", "triggers": [], "actions": []})
+    );
+    let (status, body) = get("/api/config/automation/config/18", Some(access)).await;
+    assert_eq!(
+        (status, body.as_str()),
+        (404, r#"{"message":"Resource not found"}"#)
+    );
+    // No scripts.yaml: nothing to edit (hello is in configuration.yaml)
+    assert_eq!(
+        get("/api/config/script/config/hello", Some(access)).await.0,
+        404
+    );
+
+    // The editors' WebSocket commands.
+    ws.send(cmd(
+        json!({"id": 10, "type": "manifest/list", "integrations": ["light", "nope"]}),
+    ))
+    .await
+    .unwrap();
+    let m = recv(&mut ws).await;
+    assert_eq!(m["result"].as_array().unwrap().len(), 1);
+    assert_eq!(m["result"][0]["name"], "Light");
+    ws.send(cmd(json!({"id": 11, "type": "config_entries/subscribe"})))
+        .await
+        .unwrap();
+    assert_eq!(recv(&mut ws).await["success"], true);
+    assert_eq!(recv(&mut ws).await["event"], json!([]));
+    // subscribe_condition: the result now, then again only when it changes.
+    ws.send(cmd(json!({"id": 12, "type": "subscribe_condition",
+        "condition": {"condition": "state", "entity_id": "switch.fan", "state": "on"}})))
+        .await
+        .unwrap();
+    assert_eq!(recv(&mut ws).await["success"], true);
+    assert_eq!(recv(&mut ws).await["event"], json!({"result": true}));
+    ws.send(cmd(
+        json!({"id": 13, "type": "call_service", "domain": "switch", "service": "turn_off",
+        "service_data": {"entity_id": "switch.fan"}}),
+    ))
+    .await
+    .unwrap();
+    let mut by_id = std::collections::HashMap::new();
+    while !by_id.contains_key(&13) {
+        let m = recv(&mut ws).await;
+        by_id.insert(m["id"].as_u64().unwrap(), m);
+    }
+    assert_eq!(by_id[&12]["event"], json!({"result": false}));
+    ws.send(cmd(
+        json!({"id": 14, "type": "subscribe_condition", "condition": {"condition": "sun"}}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(recv(&mut ws).await["error"]["code"], "invalid_format");
 
     std::fs::remove_dir_all(dir).ok();
 }

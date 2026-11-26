@@ -1,4 +1,5 @@
-//! HTTP routes: the frontend's static files and index page, plus the `/auth/*` endpoints.
+//! HTTP routes: the frontend's static files and index page, the `/auth/*` endpoints, and the
+//! config editors' `/api/config/*`.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -30,6 +31,14 @@ pub fn router(app: Arc<App>, frontend: &Path) -> Router {
             "/auth/login_flow/{flow_id}",
             post(flow_step).delete(flow_abort).get(flow_get),
         )
+        .route(
+            "/api/config/automation/config/{id}",
+            get(|s, h, p| editor_config(s, h, p, "automations.yaml")),
+        )
+        .route(
+            "/api/config/script/config/{key}",
+            get(|s, h, p| editor_config(s, h, p, "scripts.yaml")),
+        )
         .route("/auth/token", post(token))
         .route("/auth/revoke", post(revoke))
         .route("/manifest.json", get(manifest))
@@ -59,6 +68,39 @@ pub fn router(app: Arc<App>, frontend: &Path) -> Router {
         r = r.nest_service(&format!("/{d}"), dir);
     }
     r.with_state(app)
+}
+
+/// `GET /api/config/{automation,script}/config/<key>` (HA's `EditIdBasedConfigView` and
+/// `EditKeyBasedConfigView`): one automation by `id`, or one script by key, read from the file the
+/// editor saves to, as written. Admins only.
+async fn editor_config(
+    State(app): State<Arc<App>>,
+    headers: axum::http::HeaderMap,
+    UrlPath(key): UrlPath<String>,
+    file: &'static str,
+) -> Response {
+    let admin = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .and_then(|t| app.auth.validate(t))
+        .is_some_and(|u| u.is_admin);
+    if !admin {
+        return message(StatusCode::UNAUTHORIZED, "Unauthorized");
+    }
+    let data = match crate::config::load_file(&app.config_dir.join(file)) {
+        Ok(d) => d,
+        Err(e) => return message(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    };
+    let found = match data {
+        Some(Value::Array(list)) => list.into_iter().find(|a| a["id"] == key.as_str()),
+        Some(Value::Object(mut scripts)) => scripts.remove(&key),
+        _ => None,
+    };
+    match found {
+        Some(v) => Json(v).into_response(),
+        None => message(StatusCode::NOT_FOUND, "Resource not found"),
+    }
 }
 
 /// HA renders `index.html` as a Jinja template (frontend IndexView).

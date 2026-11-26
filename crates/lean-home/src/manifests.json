@@ -1,0 +1,242 @@
+[
+ {
+  "domain": "http",
+  "name": "HTTP",
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/http",
+  "integration_type": "system",
+  "iot_class": "local_push",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "websocket_api",
+  "name": "Home Assistant WebSocket API",
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "dependencies": [
+   "http"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/websocket_api",
+  "integration_type": "system",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "binary_sensor",
+  "name": "Binary sensor",
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/binary_sensor",
+  "integration_type": "entity",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "frontend",
+  "name": "Home Assistant frontend",
+  "codeowners": [
+   "@home-assistant/frontend"
+  ],
+  "dependencies": [
+   "api",
+   "auth",
+   "config",
+   "device_automation",
+   "diagnostics",
+   "file_upload",
+   "http",
+   "lovelace",
+   "map_tiles",
+   "onboarding",
+   "repairs",
+   "search",
+   "system_log",
+   "websocket_api"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/frontend",
+  "integration_type": "system",
+  "preview_features": {
+   "winter_mode": {}
+  },
+  "quality_scale": "internal",
+  "requirements": [
+   "home-assistant-frontend==20261028.6"
+  ],
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "automation",
+  "name": "Automation",
+  "after_dependencies": [
+   "device_automation",
+   "webhook"
+  ],
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "dependencies": [
+   "blueprint",
+   "trace"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/automation",
+  "integration_type": "system",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "switch",
+  "name": "Switch",
+  "after_dependencies": [
+   "switch_as_x"
+  ],
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/switch",
+  "integration_type": "entity",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "light",
+  "name": "Light",
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/light",
+  "integration_type": "entity",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "persistent_notification",
+  "name": "Persistent Notification",
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/persistent_notification",
+  "integration_type": "system",
+  "iot_class": "local_push",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "auth",
+  "name": "Auth",
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "dependencies": [
+   "http"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/auth",
+  "integration_type": "system",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "script",
+  "name": "Scripts",
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "dependencies": [
+   "blueprint",
+   "trace"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/script",
+  "integration_type": "system",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "sensor",
+  "name": "Sensor",
+  "after_dependencies": [
+   "recorder"
+  ],
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/sensor",
+  "integration_type": "entity",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "homeassistant",
+  "name": "Home Assistant Core Integration",
+  "codeowners": [
+   "@home-assistant/core"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/homeassistant",
+  "integration_type": "system",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "lovelace",
+  "name": "Dashboards",
+  "codeowners": [
+   "@home-assistant/frontend"
+  ],
+  "dependencies": [
+   "onboarding"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/lovelace",
+  "integration_type": "system",
+  "quality_scale": "internal",
+  "is_built_in": true,
+  "overwrites_built_in": false
+ },
+ {
+  "domain": "mqtt",
+  "name": "MQTT",
+  "after_dependencies": [
+   "hassio"
+  ],
+  "categories": [
+   "diy_makers"
+  ],
+  "codeowners": [
+   "@emontnemery",
+   "@jbouwh",
+   "@bdraco"
+  ],
+  "config_flow": true,
+  "connectivity": [
+   "mqtt"
+  ],
+  "dependencies": [
+   "file_upload",
+   "http"
+  ],
+  "documentation": "https://www.home-assistant.io/integrations/mqtt",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "quality_scale": "platinum",
+  "requirements": [
+   "paho-mqtt==2.1.0"
+  ],
+  "single_config_entry": true,
+  "is_built_in": true,
+  "overwrites_built_in": false
+ }
+]

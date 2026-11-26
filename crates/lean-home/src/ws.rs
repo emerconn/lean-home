@@ -26,6 +26,8 @@ enum Sub {
     /// `None` = all event types
     Events(Option<String>),
     Template(Box<TemplateSub>),
+    /// `subscribe_condition`: the condition, and the last event sent.
+    Condition(Box<crate::condition::Condition>, Value),
     /// Subscriptions whose events we never fire yet; kept so `unsubscribe_events` succeeds.
     Silent,
 }
@@ -283,6 +285,13 @@ impl Conn {
                     }
                     continue;
                 }
+                // shortcut: re-checked on every state change, not only the entities it reads
+                // (the event goes out only when the result changes, so clients see the same);
+                // a `for:` isn't polled each second as HA does, it updates on the next change.
+                Sub::Condition(c, last) => match condition_event(&self.app, c, last) {
+                    Some(ev) => ev,
+                    None => continue,
+                },
                 Sub::Entities(None) => change.diff(),
                 Sub::Entities(Some(ids)) if ids.iter().any(|i| **i == *change.entity_id) => {
                     change.diff()
@@ -481,11 +490,87 @@ impl Conn {
                 self.subs.insert(id, Sub::Silent);
                 vec![event(id, json!([])), result(id, Value::Null)]
             }
+            "subscribe_condition" => {
+                let cond = match crate::condition::Condition::parse(&msg["condition"]) {
+                    Ok(c) => c,
+                    Err(e) => return vec![error(id, "invalid_format", &e)],
+                };
+                let mut last = Value::Null;
+                let ev = condition_event(app, &cond, &mut last);
+                self.subs.insert(id, Sub::Condition(Box::new(cond), last));
+                let mut out = vec![result(id, Value::Null)];
+                out.extend(ev.map(|e| event(id, e)));
+                out
+            }
             "usage_prediction/common_control" => ok(json!({"entities": []})),
+            // The automation and script editors.
+            "config/entity_registry/list" => ok(app.registry.list_entities().into()),
+            "config/category_registry/list" => ok(json!([])),
+            // shortcut: blueprints aren't expanded yet, so none are offered.
+            "blueprint/list" => ok(json!({})),
+            // shortcut: no icons.json data yet; the frontend falls back to its built-in icons.
+            "frontend/get_icons" => ok(json!({"resources": {}})),
+            "manifest/list" => {
+                let wanted: Vec<&str> = match msg["integrations"].as_array() {
+                    Some(a) => a.iter().filter_map(Value::as_str).collect(),
+                    None => app.components(),
+                };
+                ok(MANIFESTS
+                    .iter()
+                    .filter(|m| wanted.iter().any(|w| m["domain"] == *w))
+                    .cloned()
+                    .collect())
+            }
+            "config_entries/subscribe" => {
+                self.subs.insert(id, Sub::Silent);
+                let loaded: Vec<&str> = app.mqtt.get().map_or(vec![], |_| vec!["mqtt"]);
+                vec![
+                    result(id, Value::Null),
+                    event(id, app.registry.config_entries_event(&loaded)),
+                ]
+            }
+            // The new-style triggers and conditions with descriptions (HA lists e.g.
+            // `light.turned_on`); the classic ones (`state`, `time`…) are built into the frontend.
+            "trigger_platforms/subscribe" | "condition_platforms/subscribe" => {
+                self.subs.insert(id, Sub::Silent);
+                let mut platforms = json!({});
+                if msg["type"] == "trigger_platforms/subscribe" && app.mqtt.get().is_some() {
+                    platforms["mqtt"] = json!({"fields": {
+                        "payload": {"example": "on", "required": false, "selector": {"text": {"multiline": false, "multiple": false}}},
+                        "topic": {"example": "living_room/switch/ac", "required": true, "selector": {"text": {"multiline": false, "multiple": false}}},
+                    }});
+                }
+                vec![result(id, Value::Null), event(id, platforms)]
+            }
             _ => vec![error(id, "unknown_command", "Unknown command.")],
         }
     }
 }
+
+/// A `subscribe_condition` event when the result differs from `last` (HA's `evaluate_condition`).
+// shortcut: template errors aren't forwarded as `template_errors` yet.
+fn condition_event(app: &App, c: &crate::condition::Condition, last: &mut Value) -> Option<Value> {
+    let vars = serde_json::Map::new();
+    let ev = crate::condition::Eval {
+        states: &app.states,
+        vars: &vars,
+        trace: None,
+    };
+    let now = match c.check(&ev, "", None) {
+        Ok(b) => json!({"result": b}),
+        Err(e) => json!({"error": e}),
+    };
+    (now != *last).then(|| {
+        *last = now.clone();
+        now
+    })
+}
+
+/// The manifests of the integrations lean-home implements, as HA 2026.11.2 sends them (taken
+/// from the `automations` recording; regenerate with the HA upgrade, see docs/compatibility.md).
+static MANIFESTS: std::sync::LazyLock<Vec<Value>> = std::sync::LazyLock::new(|| {
+    serde_json::from_str(include_str!("manifests.json")).expect("manifests.json")
+});
 
 /// Panels that need no backend of their own: dashboards the frontend generates from entities.
 /// `home` is the default panel since 2026.x; without it the frontend opens "Page not found".
