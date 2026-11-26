@@ -25,7 +25,7 @@ use std::sync::{Arc, OnceLock};
 use serde_json::{Value, json};
 
 /// The HA version we are wire-compatible with; the frontend gates features on it.
-pub const HA_VERSION: &str = "2026.11.2";
+pub const HA_VERSION: &str = "2026.11.3";
 
 pub struct App {
     pub auth: auth::Auth,
