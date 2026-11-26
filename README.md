@@ -58,8 +58,10 @@ compat scenario:
 Not there yet: history, every integration but MQTT, translations (the UI shows raw states such as
 `on`). `try/setup.sh reset` stops it and deletes `try/config`.
 
-The image on its own: `docker build --build-arg HA_FRONTEND=<from compat/versions.env> -t
-lean-home .`, then `docker run -v /path/to/config:/config -p 8123:8123 lean-home`. The config dir
+The image on its own: each release publishes `ghcr.io/emerconn/lean-home:<version>` (and
+`:latest`, x86_64): `docker run -v /path/to/config:/config -p 8123:8123
+ghcr.io/emerconn/lean-home:latest`. Or build it: `docker build --build-arg HA_FRONTEND=<from
+compat/versions.env> -t lean-home .`. The config dir
 must be one HA has onboarded (lean-home has no onboarding yet). With a copy of a real HA config
 dir, only its MQTT devices, automations and scripts come up today. Use a **copy**: lean-home
 writes to it (`.storage`, the editors' YAML files).
