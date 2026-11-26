@@ -1039,7 +1039,8 @@ mod tests {
             Context::new(None),
         );
         start(&app);
-        tokio::time::sleep(Duration::from_secs(25 * 3600)).await;
+        // Any 24 h holds exactly one 03:00 (UTC: no DST), whenever the test runs.
+        tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
         let list = app.traces.list("automation", Some("1700000000003"));
         assert_eq!(list.len(), 1, "one night, one run");
         assert_eq!(list[0]["trigger"], "time");
