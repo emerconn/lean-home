@@ -33,11 +33,13 @@ pub fn router(app: Arc<App>, frontend: &Path) -> Router {
         )
         .route(
             "/api/config/automation/config/{id}",
-            get(|s, h, p| editor_config(s, h, p, "automations.yaml")),
+            get(automation_config)
+                .post(automation_config)
+                .delete(automation_config),
         )
         .route(
             "/api/config/script/config/{key}",
-            get(|s, h, p| editor_config(s, h, p, "scripts.yaml")),
+            get(script_config).post(script_config).delete(script_config),
         )
         .route("/auth/token", post(token))
         .route("/auth/revoke", post(revoke))
@@ -70,14 +72,35 @@ pub fn router(app: Arc<App>, frontend: &Path) -> Router {
     r.with_state(app)
 }
 
-/// `GET /api/config/{automation,script}/config/<key>` (HA's `EditIdBasedConfigView` and
-/// `EditKeyBasedConfigView`): one automation by `id`, or one script by key, read from the file the
-/// editor saves to, as written. Admins only.
+async fn automation_config(
+    s: State<Arc<App>>,
+    m: axum::http::Method,
+    h: axum::http::HeaderMap,
+    p: UrlPath<String>,
+    body: Bytes,
+) -> Response {
+    editor_config(s, m, h, p, crate::editor::Kind::Automation, body).await
+}
+
+async fn script_config(
+    s: State<Arc<App>>,
+    m: axum::http::Method,
+    h: axum::http::HeaderMap,
+    p: UrlPath<String>,
+    body: Bytes,
+) -> Response {
+    editor_config(s, m, h, p, crate::editor::Kind::Script, body).await
+}
+
+/// The automation and script editors' `/api/config/{automation,script}/config/<key>`: `GET`,
+/// `POST` (save) and `DELETE` (`editor.rs`). Admins only, as HA's views.
 async fn editor_config(
     State(app): State<Arc<App>>,
+    method: axum::http::Method,
     headers: axum::http::HeaderMap,
     UrlPath(key): UrlPath<String>,
-    file: &'static str,
+    kind: crate::editor::Kind,
+    body: Bytes,
 ) -> Response {
     let admin = headers
         .get(header::AUTHORIZATION)
@@ -88,19 +111,12 @@ async fn editor_config(
     if !admin {
         return message(StatusCode::UNAUTHORIZED, "Unauthorized");
     }
-    let data = match crate::config::load_file(&app.config_dir.join(file)) {
-        Ok(d) => d,
-        Err(e) => return message(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    let (status, v) = match method {
+        axum::http::Method::POST => crate::editor::save(&app, kind, &key, &body).await,
+        axum::http::Method::DELETE => crate::editor::delete(&app, kind, &key).await,
+        _ => crate::editor::get(&app, kind, &key).await,
     };
-    let found = match data {
-        Some(Value::Array(list)) => list.into_iter().find(|a| a["id"] == key.as_str()),
-        Some(Value::Object(mut scripts)) => scripts.remove(&key),
-        _ => None,
-    };
-    match found {
-        Some(v) => Json(v).into_response(),
-        None => message(StatusCode::NOT_FOUND, "Resource not found"),
-    }
+    (status, Json(v)).into_response()
 }
 
 /// HA renders `index.html` as a Jinja template (frontend IndexView).

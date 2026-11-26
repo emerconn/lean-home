@@ -1,0 +1,30 @@
+blink:
+  alias: Blink
+  description: Turn a light on, wait, then choose by the fan's state
+  fields:
+    target_light:
+      description: Light to blink
+      example: light.demo_device_desk
+      selector:
+        entity:
+          domain: light
+  mode: single
+  sequence:
+  - action: light.turn_on
+    target:
+      entity_id: '{{ target_light }}'
+  - delay:
+      seconds: 1
+  - choose:
+    - conditions:
+      - condition: state
+        entity_id: switch.demo_device_fan
+        state: 'on'
+      sequence:
+      - action: light.turn_off
+        target:
+          entity_id: '{{ target_light }}'
+    default:
+    - action: switch.turn_on
+      target:
+        entity_id: switch.demo_device_fan

@@ -31,7 +31,12 @@ def expected_entities(scenario, recv):
     # Every MQTT entity HA created from the recorded discovery messages, and with automations the
     # automation and script entities.
     platforms = {"mqtt", "automation", "script"} if scenario == "automations" else {"mqtt"}
-    return {e["ei"] for e in (first_result(recv, "config/entity_registry/list_for_display") or {}).get("entities", []) if e["pl"] in platforms}
+    found = {e["ei"] for e in (first_result(recv, "config/entity_registry/list_for_display") or {}).get("entities", []) if e["pl"] in platforms}
+    if scenario == "automations":
+        # and those the editors create later (added after the initial snapshot)
+        adds = [m["event"]["a"] for t, m in recv if t == "subscribe_entities" and m["type"] == "event" and "a" in m["event"]]
+        found |= {eid for a in adds[1:] for eid in a if eid.split(".")[0] in ("automation", "script")}
+    return found
 
 
 problems = []
@@ -65,10 +70,16 @@ def first_result(recv, command):
 
 
 def entity_changes(recv, entities):
-    """subscribe_entities `c` events for `entities`, one (entity_id, diff) per change."""
+    """subscribe_entities events for `entities` after the initial snapshot, one (entity_id, diff)
+    per change; an entity added later is {"added": state}, a removed one {"removed": True}."""
     out = []
+    snapshot = True
     for t, m in recv:
         if t == "subscribe_entities" and m["type"] == "event":
+            if "a" in m["event"] and not snapshot:
+                out += [(eid, {"added": st}) for eid, st in m["event"]["a"].items() if eid in entities]
+            snapshot = snapshot and "a" not in m["event"]
+            out += [(eid, {"removed": True}) for eid in m["event"].get("r", []) if eid in entities]
             for eid, diff in m["event"].get("c", {}).items():
                 if eid in entities:
                     if "-" in diff:
@@ -95,7 +106,8 @@ def compare_ws(scenario, rec_dir, rep_dir):
     ha_snap, lh_snap = snapshot(rec), snapshot(rep)
     entities = expected_entities(scenario, rec)
     check(entities, "the recording has no entities to compare")
-    missing = sorted(entities - set(lh_snap))
+    # Entities created later (by the editors) are checked through their "added" events below.
+    missing = sorted((entities & set(ha_snap)) - set(lh_snap))
     check(not missing, f"the recording has entities lean-home didn't create: {', '.join(missing)}")
     for eid in sorted(entities & set(lh_snap)):
         check(ha_snap.get(eid) == lh_snap[eid], f"initial state of {eid} differs", ha_snap.get(eid), lh_snap[eid])
@@ -174,6 +186,12 @@ def main():
         check((rec_dir / "index.html").read_text() == (rep_dir / "index.html").read_text(), "index.html differs")
     if scenario != "frontend-load":
         compare_mqtt(rec_dir, rep_dir)
+    if scenario == "automations":
+        # The files the editors saved, byte for byte: HA's YAML dumper decides quoting and folding.
+        for f in ("automations", "scripts"):
+            ha, lh = (rec_dir / f"{f}.saved.yaml").read_text(), (rep_dir / "config" / f"{f}.yaml").read_text()
+            compared["saved files"] = compared.get("saved files", 0) + 1
+            check(ha == lh, f"{f}.yaml as saved by the editor differs", ha, lh)
     if problems:
         print(f"{scenario}: {len(problems)} difference(s) from the HA recording:")
         for p in problems:

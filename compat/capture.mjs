@@ -9,7 +9,8 @@ const [url, out] = process.argv.slice(2);
 const norm = (s) => normFor(s, url);
 // Run after the dashboard loads, each once the previous one has settled (see settle()): {"call": [domain, service, data]} goes through the
 // frontend's own connection, {"sh": "cmd"} runs on the host (e.g. a device going offline),
-// {"sub": msg} opens a WS subscription, {"nav": "/path"} opens a frontend page.
+// {"sub": msg} opens a WS subscription, {"nav": "/path"} opens a frontend page, {"api": [method, path, data]}
+// calls the REST API as the frontend does (`hass.callApi`, e.g. the editors' save); an error reply is recorded, not thrown.
 const steps = JSON.parse(process.env.STEPS ||'[{"call": ["light", "toggle", {"entity_id": "light.kitchen"}]}]');
 // The frontend posts /auth/token as multipart; keep only the fields.
 const form = (s) => Object.fromEntries([...s.matchAll(/name="([^"]+)"\r\n\r\n([^\r]*)/g)].map((m) => [m[1], m[2]]));
@@ -82,6 +83,7 @@ try {
     else if (step.sub) await page.evaluate((m) => { document.querySelector("home-assistant").hass.connection.subscribeMessage(() => {}, m); }, step.sub);
     // In-app navigation, as the frontend's navigate() does it; a reload would log out.
     else if (step.nav) await page.evaluate((p) => { history.pushState(null, "", p); window.dispatchEvent(new CustomEvent("location-changed")); }, step.nav);
+    else if (step.api) await page.evaluate((a) => document.querySelector("home-assistant").hass.callApi(...a).catch(() => null), step.api);
     else await page.evaluate((c) => document.querySelector("home-assistant").hass.callService(...c), step.call);
     await settle(3000);
   }

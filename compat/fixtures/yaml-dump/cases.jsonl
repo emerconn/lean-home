@@ -1,0 +1,112 @@
+{"value": {"k": "on"}, "yaml": "k: 'on'\n"}
+{"value": {"k": "off"}, "yaml": "k: 'off'\n"}
+{"value": {"k": "On"}, "yaml": "k: 'On'\n"}
+{"value": {"k": "OFF"}, "yaml": "k: 'OFF'\n"}
+{"value": {"k": "yes"}, "yaml": "k: 'yes'\n"}
+{"value": {"k": "no"}, "yaml": "k: 'no'\n"}
+{"value": {"k": "Y"}, "yaml": "k: Y\n"}
+{"value": {"k": "n"}, "yaml": "k: n\n"}
+{"value": {"k": "true"}, "yaml": "k: 'true'\n"}
+{"value": {"k": "False"}, "yaml": "k: 'False'\n"}
+{"value": {"k": "null"}, "yaml": "k: 'null'\n"}
+{"value": {"k": "Null"}, "yaml": "k: 'Null'\n"}
+{"value": {"k": "~"}, "yaml": "k: '~'\n"}
+{"value": {"k": ""}, "yaml": "k: ''\n"}
+{"value": {"k": "1"}, "yaml": "k: '1'\n"}
+{"value": {"k": "-1"}, "yaml": "k: '-1'\n"}
+{"value": {"k": "+1"}, "yaml": "k: '+1'\n"}
+{"value": {"k": "0x1f"}, "yaml": "k: '0x1f'\n"}
+{"value": {"k": "0o17"}, "yaml": "k: 0o17\n"}
+{"value": {"k": "017"}, "yaml": "k: '017'\n"}
+{"value": {"k": "1_000"}, "yaml": "k: '1_000'\n"}
+{"value": {"k": "1.5"}, "yaml": "k: '1.5'\n"}
+{"value": {"k": "1e3"}, "yaml": "k: 1e3\n"}
+{"value": {"k": "1.0e+3"}, "yaml": "k: '1.0e+3'\n"}
+{"value": {"k": ".5"}, "yaml": "k: '.5'\n"}
+{"value": {"k": ".inf"}, "yaml": "k: '.inf'\n"}
+{"value": {"k": "-.Inf"}, "yaml": "k: '-.Inf'\n"}
+{"value": {"k": ".nan"}, "yaml": "k: '.nan'\n"}
+{"value": {"k": "3:00"}, "yaml": "k: '3:00'\n"}
+{"value": {"k": "190:20:30"}, "yaml": "k: '190:20:30'\n"}
+{"value": {"k": "04:00:00"}, "yaml": "k: 04:00:00\n"}
+{"value": {"k": "2026-11-25"}, "yaml": "k: '2026-11-25'\n"}
+{"value": {"k": "2026-11-25 12:00:00"}, "yaml": "k: '2026-11-25 12:00:00'\n"}
+{"value": {"k": "2026-11-25T12:00:00Z"}, "yaml": "k: '2026-11-25T12:00:00Z'\n"}
+{"value": {"k": "="}, "yaml": "k: '='\n"}
+{"value": {"k": "<<"}, "yaml": "k: '<<'\n"}
+{"value": {"k": "light.kitchen"}, "yaml": "k: light.kitchen\n"}
+{"value": {"k": "a: b"}, "yaml": "k: 'a: b'\n"}
+{"value": {"k": "a:b"}, "yaml": "k: a:b\n"}
+{"value": {"k": "a #b"}, "yaml": "k: 'a #b'\n"}
+{"value": {"k": "a#b"}, "yaml": "k: a#b\n"}
+{"value": {"k": "#x"}, "yaml": "k: '#x'\n"}
+{"value": {"k": "- x"}, "yaml": "k: '- x'\n"}
+{"value": {"k": "-x"}, "yaml": "k: -x\n"}
+{"value": {"k": "-"}, "yaml": "k: '-'\n"}
+{"value": {"k": "? x"}, "yaml": "k: '? x'\n"}
+{"value": {"k": "?x"}, "yaml": "k: ?x\n"}
+{"value": {"k": ":x"}, "yaml": "k: :x\n"}
+{"value": {"k": "x:"}, "yaml": "k: 'x:'\n"}
+{"value": {"k": "{{ x }}"}, "yaml": "k: '{{ x }}'\n"}
+{"value": {"k": "[x]"}, "yaml": "k: '[x]'\n"}
+{"value": {"k": "x]"}, "yaml": "k: x]\n"}
+{"value": {"k": "{x"}, "yaml": "k: '{x'\n"}
+{"value": {"k": "x,y"}, "yaml": "k: x,y\n"}
+{"value": {"k": "&a"}, "yaml": "k: '&a'\n"}
+{"value": {"k": "*a"}, "yaml": "k: '*a'\n"}
+{"value": {"k": "!a"}, "yaml": "k: '!a'\n"}
+{"value": {"k": "|x"}, "yaml": "k: '|x'\n"}
+{"value": {"k": ">x"}, "yaml": "k: '>x'\n"}
+{"value": {"k": "'x"}, "yaml": "k: '''x'\n"}
+{"value": {"k": "\"x"}, "yaml": "k: '\"x'\n"}
+{"value": {"k": "%x"}, "yaml": "k: '%x'\n"}
+{"value": {"k": "@x"}, "yaml": "k: '@x'\n"}
+{"value": {"k": "`x"}, "yaml": "k: '`x'\n"}
+{"value": {"k": "it's"}, "yaml": "k: it's\n"}
+{"value": {"k": "say \"hi\""}, "yaml": "k: say \"hi\"\n"}
+{"value": {"k": "a\\b"}, "yaml": "k: a\\b\n"}
+{"value": {"k": "x "}, "yaml": "k: 'x '\n"}
+{"value": {"k": " x"}, "yaml": "k: ' x'\n"}
+{"value": {"k": " "}, "yaml": "k: ' '\n"}
+{"value": {"k": "a  b"}, "yaml": "k: a  b\n"}
+{"value": {"k": "---"}, "yaml": "k: '---'\n"}
+{"value": {"k": "--- x"}, "yaml": "k: '--- x'\n"}
+{"value": {"k": "..."}, "yaml": "k: '...'\n"}
+{"value": {"k": "a\tb"}, "yaml": "k: \"a\\tb\"\n"}
+{"value": {"k": "\tx"}, "yaml": "k: \"\\tx\"\n"}
+{"value": {"k": "a\nb"}, "yaml": "k: 'a\n\n  b'\n"}
+{"value": {"k": "a\n"}, "yaml": "k: 'a\n\n  '\n"}
+{"value": {"k": "\na"}, "yaml": "k: '\n\n  a'\n"}
+{"value": {"k": "a\n\nb"}, "yaml": "k: 'a\n\n\n  b'\n"}
+{"value": {"k": "a \nb"}, "yaml": "k: \"a \\nb\"\n"}
+{"value": {"k": "a\n b"}, "yaml": "k: \"a\\n b\"\n"}
+{"value": {"k": "line1\nline2\nline3\n"}, "yaml": "k: 'line1\n\n  line2\n\n  line3\n\n  '\n"}
+{"value": {"k": "Küche"}, "yaml": "k: Küche\n"}
+{"value": {"k": "温度"}, "yaml": "k: 温度\n"}
+{"value": {"k": "🙂 smile"}, "yaml": "k: \"\\U0001F642 smile\"\n"}
+{"value": {"k": "café"}, "yaml": "k: café\n"}
+{"value": {"k": " nbsp"}, "yaml": "k:  nbsp\n"}
+{"value": {"k": "ab"}, "yaml": "k: \"a\\Nb\"\n"}
+{"value": {"k": "a b"}, "yaml": "k: 'a   b'\n"}
+{"value": {"k": "\u0007bell"}, "yaml": "k: \"\\abell\"\n"}
+{"value": {"k": "﻿bom"}, "yaml": "k: \"\\uFEFFbom\"\n"}
+{"value": {"k": "word word word word word word word word word word word word word word word word word word word word "}, "yaml": "k: 'word word word word word word word word word word word word word word word word\n  word word word word '\n"}
+{"value": {"k": "{{ states('sensor.demo_device_temperature') | float(0) < 30 and is_state('switch.x', 'on') }}"}, "yaml": "k: '{{ states(''sensor.demo_device_temperature'') | float(0) < 30 and is_state(''switch.x'',\n  ''on'') }}'\n"}
+{"value": {"k": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "yaml": "k: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"}
+{"value": {"k": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b"}, "yaml": "k: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  b\n"}
+{"value": {"k": "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x "}, "yaml": "k: 'x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x\n  x x x x x x x x x x x '\n"}
+{"value": {"k": "it's a long line with 'quotes' that has to be folded somewhere past the eightieth column ok"}, "yaml": "k: it's a long line with 'quotes' that has to be folded somewhere past the eightieth\n  column ok\n"}
+{"value": {"k": "two  spaces  everywhere  in  a  long  line  so  that  folding  has  to  pick  a  single  space  x"}, "yaml": "k: two  spaces  everywhere  in  a  long  line  so  that  folding  has  to  pick  a  single  space  x\n"}
+{"value": {"k": "long line ending with a space so it needs quotes and gets folded across lines when it is long "}, "yaml": "k: 'long line ending with a space so it needs quotes and gets folded across lines\n  when it is long '\n"}
+{"value": {"k": "multi line\nwith a long second line that goes on and on past the eightieth column of the file ok"}, "yaml": "k: 'multi line\n\n  with a long second line that goes on and on past the eightieth column of the file\n  ok'\n"}
+{"value": ["on"], "yaml": "- 'on'\n"}
+{"value": ["a: b"], "yaml": "- 'a: b'\n"}
+{"value": ["x"], "yaml": "- x\n"}
+{"value": [""], "yaml": "- ''\n"}
+{"value": {"n": null, "t": true, "f": false, "i": 30, "neg": -5, "big": 100000000000000000000, "fl": 1.5, "fl0": 1.0, "flsmall": 1e-07, "flbig": 1.5e+20, "list": [], "map": {}, "nested": {"a": [1, null, {"b": null}]}}, "yaml": "n:\nt: true\nf: false\ni: 30\nneg: -5\nbig: 100000000000000000000\nfl: 1.5\nfl0: 1.0\nflsmall: 1.0e-07\nflbig: 1.5e+20\nlist: []\nmap: {}\nnested:\n  a:\n  - 1\n  - null\n  - b:\n"}
+{"value": {"on": 1, "1": "one", "a b": 2, "a: b": 3, "": 4, "long key long key long key long key long key long key long key long key long key long key long key long key ": 5}, "yaml": "'on': 1\n'1': one\na b: 2\n'a: b': 3\n'': 4\n'long key long key long key long key long key long key long key long key long key long key long key long key ': 5\n"}
+{"value": [{"id": "1700000000004", "alias": "Door closed", "triggers": [{"trigger": "state", "entity_id": ["a.b", "c.d"], "to": "off", "for": {"seconds": 5}}], "conditions": [], "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.x"}, "data": {"brightness_pct": 30}}], "mode": "single"}], "yaml": "- id: '1700000000004'\n  alias: Door closed\n  triggers:\n  - trigger: state\n    entity_id:\n    - a.b\n    - c.d\n    to: 'off'\n    for:\n      seconds: 5\n  conditions: []\n  actions:\n  - action: light.turn_on\n    target:\n      entity_id: light.x\n    data:\n      brightness_pct: 30\n  mode: single\n"}
+{"value": {"wave": {"alias": "Wave", "sequence": [{"delay": "00:00:01"}, {"choose": [{"conditions": [{"condition": "state", "entity_id": "a.b", "state": "on"}], "sequence": [{"action": "x.y"}]}], "default": []}]}}, "yaml": "wave:\n  alias: Wave\n  sequence:\n  - delay: 00:00:01\n  - choose:\n    - conditions:\n      - condition: state\n        entity_id: a.b\n        state: 'on'\n      sequence:\n      - action: x.y\n    default: []\n"}
+{"value": [[1, 2], [[3]], {"a": [[4]]}], "yaml": "- - 1\n  - 2\n- - - 3\n- a:\n  - - 4\n"}
+{"value": [], "yaml": "[]\n"}
+{"value": {}, "yaml": "{}\n"}

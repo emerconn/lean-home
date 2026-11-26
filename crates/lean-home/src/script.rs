@@ -6,7 +6,7 @@
 use std::fmt::Write as _;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -447,6 +447,35 @@ impl ScriptEntity {
         states.set(&self.entity_id, state, attrs, ctx);
     }
 
+    /// The state HA writes for an entity removed while its registry entry stays (a reload
+    /// replacing or dropping it): unavailable, `restored`.
+    pub(crate) fn write_removed(&self, states: &States) {
+        let mut attrs = Map::new();
+        attrs.insert("restored".into(), true.into());
+        if let Some(id) = &self.unique_id {
+            attrs.insert("id".into(), id.clone().into());
+        }
+        attrs.insert("friendly_name".into(), self.name.clone().into());
+        attrs.insert("supported_features".into(), 0.into());
+        states.set(&self.entity_id, "unavailable", attrs, Context::new(None));
+    }
+
+    /// What a replacement keeps from the entity it replaces (HA's RestoreEntity reads the last
+    /// state): `last_triggered`, and an automation's on/off unless `initial_state` says.
+    pub(crate) fn restore(&self, prev: &ScriptEntity) {
+        let old = prev.rt.lock().unwrap();
+        let mut rt = self.rt.lock().unwrap();
+        rt.last_triggered = old.last_triggered;
+        if self
+            .raw
+            .get("initial_state")
+            .and_then(Value::as_bool)
+            .is_none()
+        {
+            rt.enabled = old.enabled;
+        }
+    }
+
     pub(crate) fn set_context(&self, ctx: &Context) {
         self.rt.lock().unwrap().context = Some((ctx.clone(), Instant::now()));
     }
@@ -508,10 +537,10 @@ impl ScriptEntity {
     }
 }
 
-/// All scripts.
+/// All scripts; replaced one by one when the config is reloaded.
 #[derive(Default)]
 pub struct Scripts {
-    items: IndexMap<String, Arc<ScriptEntity>>,
+    items: RwLock<IndexMap<String, Arc<ScriptEntity>>>,
 }
 
 impl Scripts {
@@ -535,13 +564,72 @@ impl Scripts {
         for e in items.values() {
             e.write(states);
         }
-        Self { items }
+        Self {
+            items: RwLock::new(items),
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<Arc<ScriptEntity>> {
+        self.items.read().unwrap().get(key).cloned()
+    }
+
+    /// `script.reload` (HA's `_async_process_config`): re-read the config; a script whose config
+    /// didn't change keeps running, a changed one is replaced (keeping `last_triggered`), a new
+    /// one is added, a removed one stops and is shown unavailable.
+    pub async fn reload(&self, app: &Arc<App>) -> Result<(), String> {
+        let config = crate::config::load(&app.config_dir)?;
+        let old = self.items.read().unwrap().clone();
+        let mut next = IndexMap::new();
+        let mut added = vec![];
+        for (key, raw) in &config.scripts {
+            match old.get(key) {
+                Some(e) if e.raw == *raw => {
+                    next.insert(key.clone(), e.clone());
+                }
+                prev => {
+                    let e = Arc::new(ScriptEntity::script(key, raw, &app.registry));
+                    if let Some(prev) = prev {
+                        prev.stop().await;
+                        prev.write_removed(&app.states);
+                        e.restore(prev);
+                    }
+                    next.insert(key.clone(), e.clone());
+                    added.push(e);
+                }
+            }
+        }
+        for (key, e) in &old {
+            if !next.contains_key(key) {
+                e.stop().await;
+                e.write_removed(&app.states);
+            }
+        }
+        *self.items.write().unwrap() = next;
+        for e in added {
+            e.write(&app.states);
+        }
+        Ok(())
+    }
+
+    /// The config editor deleted a script: its entity goes away (HA removes its registry entry).
+    pub async fn remove(&self, app: &App, key: &str) {
+        let e = self.items.write().unwrap().shift_remove(key);
+        if let Some(e) = e {
+            e.stop().await;
+            app.states.remove(&e.entity_id);
+        }
     }
 
     /// The `script` domain of `get_services`: each script, then HA's four services.
     pub fn describe(&self) -> Value {
         let mut out = Map::new();
-        for e in self.items.values().filter(|e| e.sequence.is_ok()) {
+        for e in self
+            .items
+            .read()
+            .unwrap()
+            .values()
+            .filter(|e| e.sequence.is_ok())
+        {
             let fields: Map<String, Value> = e
                 .raw
                 .get("fields")
@@ -564,8 +652,13 @@ impl Scripts {
         out.into()
     }
 
-    fn by_entity_id(&self, id: &str) -> Option<&Arc<ScriptEntity>> {
-        self.items.values().find(|e| e.entity_id == id)
+    fn by_entity_id(&self, id: &str) -> Option<Arc<ScriptEntity>> {
+        self.items
+            .read()
+            .unwrap()
+            .values()
+            .find(|e| e.entity_id == id)
+            .cloned()
     }
 }
 
@@ -599,7 +692,7 @@ pub async fn call_service(
     stack: Vec<String>,
 ) -> Result<Outcome, (&'static str, String)> {
     let scripts = &app.scripts;
-    if let Some(e) = scripts.items.get(service).filter(|e| e.sequence.is_ok()) {
+    if let Some(e) = scripts.get(service).filter(|e| e.sequence.is_ok()) {
         let vars = data.as_object().cloned().unwrap_or_default();
         let run_id = start(app, e.clone(), vars, ctx, true, stack).await;
         return Ok(Outcome {
@@ -608,11 +701,11 @@ pub async fn call_service(
     }
     if !matches!(service, "turn_on" | "turn_off" | "toggle") {
         if service == "reload" {
-            // shortcut: reloading re-reads configuration.yaml; restart lean-home instead for now.
-            return Err((
-                "home_assistant_error",
-                "Reloading scripts is not supported yet".into(),
-            ));
+            return scripts
+                .reload(app)
+                .await
+                .map(|_| Outcome::default())
+                .map_err(|e| ("home_assistant_error", e));
         }
         return Err(("not_found", format!("Service script.{service} not found.")));
     }
@@ -622,11 +715,7 @@ pub async fn call_service(
         .collect();
     let mut child = None;
     for id in ids {
-        let Some(e) = scripts
-            .by_entity_id(&id)
-            .filter(|e| e.sequence.is_ok())
-            .cloned()
-        else {
+        let Some(e) = scripts.by_entity_id(&id).filter(|e| e.sequence.is_ok()) else {
             continue;
         };
         let vars = data["variables"].as_object().cloned().unwrap_or_default();

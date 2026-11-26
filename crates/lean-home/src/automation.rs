@@ -4,7 +4,7 @@
 //! `script.rs` runs; this module adds the triggers and conditions in front of a run.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use chrono::{DateTime, Datelike, NaiveTime, Utc};
@@ -199,101 +199,283 @@ pub struct Automation {
     entity: Arc<ScriptEntity>,
     triggers: Vec<Trigger>,
     conditions: Vec<Condition>,
+    /// Its armed triggers' tasks (time timers, MQTT listeners), stopped when it's removed.
+    tasks: Mutex<Vec<AbortHandle>>,
+    /// (trigger index, entity) -> the timer waiting out a state trigger's `for:`.
+    pending: Mutex<HashMap<(usize, String), AbortHandle>>,
 }
 
-/// All automations, and the `for:` timers their state triggers have running.
+impl Automation {
+    /// From one `automation:` entry, the `n`th; `taken`: entity ids already in use.
+    fn new(
+        n: usize,
+        raw: &Value,
+        registry: &crate::registry::Registry,
+        taken: &dyn Fn(&str) -> bool,
+    ) -> Self {
+        let m = raw.as_object().cloned().unwrap_or_default();
+        let id = m.get("id").map(id_string);
+        let name = m
+            .get("alias")
+            .and_then(Value::as_str)
+            .map_or_else(|| format!("automation {n}"), String::from);
+        let entity_id = id
+            .as_deref()
+            .and_then(|id| registry.entity("automation", "automation", Some(id)))
+            .and_then(|e| e["entity_id"].as_str())
+            .map(String::from)
+            .unwrap_or_else(|| {
+                let base = format!("automation.{}", slugify(&name));
+                let mut eid = base.clone();
+                let mut k = 2;
+                while taken(&eid) || registry.entity_id_taken(&eid) {
+                    eid = format!("{base}_{k}");
+                    k += 1;
+                }
+                eid
+            });
+        let triggers = list(plural(&m, "triggers"))
+            .iter()
+            .enumerate()
+            .map(|(i, t)| parse_trigger(i, t))
+            .collect::<Result<Vec<_>, _>>();
+        let conditions = list(plural(&m, "conditions"))
+            .iter()
+            .map(Condition::parse)
+            .collect::<Result<Vec<_>, _>>();
+        let check = match (&triggers, &conditions) {
+            (Err(e), _) | (_, Err(e)) => Err(e.clone()),
+            _ => Ok(()),
+        };
+        let key = entity_id.split_once('.').map_or("", |(_, o)| o).to_string();
+        // shortcut: an automation without an `id` stores its traces under its object id;
+        // HA has no trace for it (the frontend can't open one without an id).
+        let item_id = id.clone().unwrap_or_else(|| key.clone());
+        let entity = ScriptEntity::new(
+            "automation",
+            (&key, &item_id, id.as_deref()),
+            entity_id,
+            &name,
+            raw,
+            plural(&m, "actions").unwrap_or(&Value::Null),
+            check,
+        );
+        Self {
+            entity: Arc::new(entity),
+            triggers: triggers.unwrap_or_default(),
+            conditions: conditions.unwrap_or_default(),
+            tasks: Mutex::default(),
+            pending: Mutex::default(),
+        }
+    }
+
+    /// The `id` it's edited and reloaded by.
+    fn id(&self) -> Option<String> {
+        self.entity.raw.get("id").map(id_string)
+    }
+
+    /// Stop its `for:` timers (turned off).
+    fn cancel_pending(&self) {
+        for (_, h) in self.pending.lock().unwrap().drain() {
+            h.abort();
+        }
+    }
+
+    /// Detach its triggers and stop its runs (removed or replaced).
+    async fn unload(&self) {
+        self.cancel_pending();
+        for h in self.tasks.lock().unwrap().drain(..) {
+            h.abort();
+        }
+        self.entity.stop().await;
+    }
+}
+
+/// All automations; replaced one by one when the config is reloaded.
 #[derive(Default)]
 pub struct Automations {
-    items: Vec<Arc<Automation>>,
-    /// (automation index, trigger index, entity) -> the timer waiting out its `for:`.
-    pending: Mutex<HashMap<(usize, usize, String), AbortHandle>>,
+    items: RwLock<Vec<Arc<Automation>>>,
 }
 
 impl Automations {
     /// From `automation:` in the config; writes each entity's initial state.
     pub fn load(config: &[Value], registry: &crate::registry::Registry, states: &States) -> Self {
-        let mut items = vec![];
-        let mut taken: Vec<String> = vec![];
+        let mut items: Vec<Arc<Automation>> = vec![];
         for (n, raw) in config.iter().enumerate() {
-            let m = raw.as_object().cloned().unwrap_or_default();
-            let id = m.get("id").map(id_string);
-            let name = m
-                .get("alias")
-                .and_then(Value::as_str)
-                .map_or_else(|| format!("automation {n}"), String::from);
-            let entity_id = id
-                .as_deref()
-                .and_then(|id| registry.entity("automation", "automation", Some(id)))
-                .and_then(|e| e["entity_id"].as_str())
-                .map(String::from)
-                .unwrap_or_else(|| {
-                    let base = format!("automation.{}", slugify(&name));
-                    let mut eid = base.clone();
-                    let mut k = 2;
-                    while taken.contains(&eid) || registry.entity_id_taken(&eid) {
-                        eid = format!("{base}_{k}");
-                        k += 1;
-                    }
-                    eid
-                });
-            taken.push(entity_id.clone());
-            let triggers = list(plural(&m, "triggers"))
-                .iter()
-                .enumerate()
-                .map(|(i, t)| parse_trigger(i, t))
-                .collect::<Result<Vec<_>, _>>();
-            let conditions = list(plural(&m, "conditions"))
-                .iter()
-                .map(Condition::parse)
-                .collect::<Result<Vec<_>, _>>();
-            let check = match (&triggers, &conditions) {
-                (Err(e), _) | (_, Err(e)) => Err(e.clone()),
-                _ => Ok(()),
-            };
-            let key = entity_id.split_once('.').map_or("", |(_, o)| o).to_string();
-            // shortcut: an automation without an `id` stores its traces under its object id;
-            // HA has no trace for it (the frontend can't open one without an id).
-            let item_id = id.clone().unwrap_or_else(|| key.clone());
-            let entity = ScriptEntity::new(
-                "automation",
-                (&key, &item_id, id.as_deref()),
-                entity_id,
-                &name,
-                raw,
-                plural(&m, "actions").unwrap_or(&Value::Null),
-                check,
-            );
-            entity.write(states);
-            items.push(Arc::new(Automation {
-                entity: Arc::new(entity),
-                triggers: triggers.unwrap_or_default(),
-                conditions: conditions.unwrap_or_default(),
-            }));
+            let taken = |eid: &str| items.iter().any(|a| a.entity.entity_id == eid);
+            let a = Automation::new(n, raw, registry, &taken);
+            a.entity.write(states);
+            items.push(Arc::new(a));
         }
         // shortcut: on/off and last_triggered aren't restored across restarts (HA's
         // RestoreEntity); add with the recorder step.
         Self {
-            items,
-            pending: Mutex::default(),
+            items: RwLock::new(items),
         }
     }
 
-    /// Stop the `for:` timers of automation `n` (it was turned off).
-    fn cancel_pending(&self, n: usize) {
-        self.pending.lock().unwrap().retain(|(a, _, _), h| {
-            if *a == n {
-                h.abort();
+    fn all(&self) -> Vec<Arc<Automation>> {
+        self.items.read().unwrap().clone()
+    }
+
+    /// `automation.reload` (HA's `async_process_config`, or `async_process_single_config` with
+    /// an `id`, as the editor's save calls it): re-read the config; an automation whose config
+    /// didn't change keeps running, a changed one is replaced (keeping on/off and
+    /// `last_triggered`), a new one is added, a removed one stops and is shown unavailable.
+    pub async fn reload(&self, app: &Arc<App>, only_id: Option<&str>) -> Result<(), String> {
+        let config = crate::config::load(&app.config_dir)?;
+        let old = self.all();
+        let wanted = |id: Option<String>| only_id.is_none() || id.as_deref() == only_id;
+        let mut next: Vec<Arc<Automation>> =
+            old.iter().filter(|a| !wanted(a.id())).cloned().collect();
+        let mut added = vec![];
+        for (n, raw) in config.automations.iter().enumerate() {
+            if !wanted(raw.get("id").map(id_string)) {
+                continue;
             }
-            *a != n
-        });
+            let probe = Automation::new(n, raw, &app.registry, &|_| false);
+            let same =
+                |a: &&Arc<Automation>| a.entity.raw == *raw && a.entity.name == probe.entity.name;
+            if let Some(kept) = old
+                .iter()
+                .filter(|a| !next.iter().any(|b| Arc::ptr_eq(a, b)))
+                .find(same)
+            {
+                next.push(kept.clone());
+                continue;
+            }
+            // A replacement keeps the entity id of the one it replaces (HA's registry entry).
+            let prev = probe.id().and_then(|id| {
+                old.iter()
+                    .find(|a| {
+                        a.id().as_deref() == Some(&id) && !next.iter().any(|b| Arc::ptr_eq(a, b))
+                    })
+                    .cloned()
+            });
+            let a = match &prev {
+                Some(p) => {
+                    let reuse = p.entity.entity_id.clone();
+                    let mut a = Automation::new(n, raw, &app.registry, &|_| false);
+                    if a.entity.entity_id != reuse {
+                        a = Automation::new(n, raw, &app.registry, &|eid| eid != reuse);
+                    }
+                    a
+                }
+                None => {
+                    let taken = |eid: &str| {
+                        app.states.get(eid).is_some()
+                            || next.iter().any(|b| b.entity.entity_id == eid)
+                    };
+                    Automation::new(n, raw, &app.registry, &taken)
+                }
+            };
+            let a = Arc::new(a);
+            next.push(a.clone());
+            added.push((a, prev));
+        }
+        for a in &old {
+            if !next.iter().any(|b| Arc::ptr_eq(a, b)) {
+                a.unload().await;
+                a.entity.write_removed(&app.states);
+            }
+        }
+        *self.items.write().unwrap() = next;
+        for (a, prev) in added {
+            if let Some(p) = &prev {
+                a.entity.restore(&p.entity);
+            }
+            a.entity.write(&app.states);
+            arm(app, &a);
+        }
+        Ok(())
+    }
+
+    /// The config editor deleted an automation: its entity goes away (HA removes its registry
+    /// entry).
+    pub async fn remove(&self, app: &App, id: &str) {
+        let gone: Vec<_> = {
+            let mut items = self.items.write().unwrap();
+            let (gone, keep) = items.drain(..).partition(|a| a.id().as_deref() == Some(id));
+            *items = keep;
+            gone
+        };
+        for a in gone {
+            a.unload().await;
+            app.states.remove(&a.entity.entity_id);
+        }
     }
 }
 
-/// Arm every automation's triggers (HA does it once started). Call after MQTT has started.
+/// Arm every automation's triggers (HA does it once started), and listen for the state changes
+/// state triggers wait for. Call after MQTT has started.
 pub fn start(app: &Arc<App>) {
-    let autos = &app.automations.items;
-    // Trigger-level `enabled`, rendered once, as HA does when it attaches the triggers.
-    let armed = |t: &Trigger, a: &Automation| match &t.enabled {
+    for a in app.automations.all() {
+        arm(app, &a);
+    }
+    let (mut rx, _) = app.states.subscribe();
+    let app = app.clone();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(change) => on_state(&app, &change),
+                Err(RecvError::Lagged(k)) => {
+                    eprintln!("automation: {k} state changes dropped (too slow)")
+                }
+                Err(RecvError::Closed) => return,
+            }
+        }
+    });
+}
+
+/// Attach one automation's MQTT and time triggers (state triggers are checked in `on_state`).
+fn arm(app: &Arc<App>, a: &Arc<Automation>) {
+    if !a.entity.available() {
+        return;
+    }
+    let mut tasks = vec![];
+    for (ti, t) in a.triggers.iter().enumerate() {
+        if !armed(app, a, t) {
+            continue;
+        }
+        match &t.kind {
+            Kind::State { .. } => {}
+            Kind::Mqtt { topic, qos, .. } => {
+                let Some(mqtt) = app.mqtt.get() else {
+                    a.entity.log("ERROR", "MQTT trigger: MQTT is not set up");
+                    continue;
+                };
+                // shortcut: the topic stays subscribed after the automation is removed; its
+                // messages are ignored. Unsubscribe when no other trigger uses it.
+                let mut rx = mqtt.subscribe_for(topic, *qos);
+                let (app, a) = (app.clone(), a.clone());
+                tasks.push(tokio::spawn(async move {
+                    loop {
+                        match rx.recv().await {
+                            Ok(msg) => on_mqtt(&app, &a, ti, &msg),
+                            Err(RecvError::Lagged(k)) => {
+                                eprintln!("automation: {k} MQTT messages dropped (too slow)")
+                            }
+                            Err(RecvError::Closed) => return,
+                        }
+                    }
+                }));
+            }
+            Kind::Time { at, .. } => {
+                for &at in at {
+                    tasks.push(tokio::spawn(time_trigger(app.clone(), a.clone(), ti, at)));
+                }
+            }
+        }
+    }
+    a.tasks
+        .lock()
+        .unwrap()
+        .extend(tasks.iter().map(|t| t.abort_handle()));
+}
+
+/// A trigger's `enabled`, rendered when it attaches, as HA does.
+fn armed(app: &App, a: &Automation, t: &Trigger) -> bool {
+    match &t.enabled {
         None => true,
         Some(e) => match render_complex(&app.states, e, &attach_vars(app, a)) {
             Ok(Value::Bool(b)) => b,
@@ -304,59 +486,6 @@ pub fn start(app: &Arc<App>) {
                 false
             }
         },
-    };
-    let mut any_state = false;
-    for (n, a) in autos.iter().enumerate() {
-        if !a.entity.available() {
-            continue;
-        }
-        for (ti, t) in a.triggers.iter().enumerate() {
-            if !armed(t, a) {
-                continue;
-            }
-            match &t.kind {
-                Kind::State { .. } => any_state = true,
-                Kind::Mqtt { topic, qos, .. } => {
-                    let Some(mqtt) = app.mqtt.get() else {
-                        a.entity.log("ERROR", "MQTT trigger: MQTT is not set up");
-                        continue;
-                    };
-                    let mut rx = mqtt.subscribe_for(topic, *qos);
-                    let app = app.clone();
-                    tokio::spawn(async move {
-                        loop {
-                            match rx.recv().await {
-                                Ok(msg) => on_mqtt(&app, n, ti, &msg),
-                                Err(RecvError::Lagged(k)) => {
-                                    eprintln!("automation: {k} MQTT messages dropped (too slow)")
-                                }
-                                Err(RecvError::Closed) => return,
-                            }
-                        }
-                    });
-                }
-                Kind::Time { at, .. } => {
-                    for &at in at {
-                        tokio::spawn(time_trigger(app.clone(), n, ti, at));
-                    }
-                }
-            }
-        }
-    }
-    if any_state {
-        let (mut rx, _) = app.states.subscribe();
-        let app = app.clone();
-        tokio::spawn(async move {
-            loop {
-                match rx.recv().await {
-                    Ok(change) => on_state(&app, &change),
-                    Err(RecvError::Lagged(k)) => {
-                        eprintln!("automation: {k} state changes dropped (too slow)")
-                    }
-                    Err(RecvError::Closed) => return,
-                }
-            }
-        });
     }
 }
 
@@ -374,9 +503,14 @@ fn attach_vars(app: &App, a: &Automation) -> Map<String, Value> {
     v
 }
 
-/// A trigger fired: run automation `n` in the background, if it's on.
-fn fire(app: &Arc<App>, n: usize, t: &Trigger, data: Map<String, Value>, ctx: Option<Context>) {
-    let a = app.automations.items[n].clone();
+/// A trigger fired: run the automation in the background, if it's on.
+fn fire(
+    app: &Arc<App>,
+    a: &Arc<Automation>,
+    t: &Trigger,
+    data: Map<String, Value>,
+    ctx: Option<Context>,
+) {
     if !a.entity.enabled() {
         return;
     }
@@ -400,13 +534,13 @@ fn fire(app: &Arc<App>, n: usize, t: &Trigger, data: Map<String, Value>, ctx: Op
         }
     }
     run_vars.insert("trigger".into(), data.into());
-    let app = app.clone();
+    let (app, a) = (app.clone(), a.clone());
     tokio::spawn(async move { trigger(&app, &a, run_vars, ctx.as_ref(), false).await });
 }
 
 /// HA's `state_automation_listener`, for every automation's state triggers.
 fn on_state(app: &Arc<App>, change: &Change) {
-    for (n, a) in app.automations.items.iter().enumerate() {
+    for a in app.automations.all() {
         if !a.entity.available() || !a.entity.enabled() {
             continue;
         }
@@ -450,11 +584,11 @@ fn on_state(app: &Arc<App>, change: &Change) {
                 format!("state of {}", change.entity_id).into(),
             );
             let Some(for_) = for_ else {
-                fire(app, n, t, data, Some(change.context.clone()));
+                fire(app, &a, t, data, Some(change.context.clone()));
                 continue;
             };
             // `for:`: fire once the entity has kept the matched state that long.
-            let mut scope = attach_vars(app, a);
+            let mut scope = attach_vars(app, &a);
             scope.insert(
                 "trigger".into(),
                 json!({"platform": "state", "entity_id": &*change.entity_id,
@@ -488,8 +622,9 @@ fn on_state(app: &Arc<App>, change: &Change) {
             };
             // Subscribed now, so no change between this one and the timer's start is missed.
             let (mut rx, _) = app.states.subscribe();
-            let (app2, entity, ctx) = (
+            let (app2, a2, entity, ctx) = (
                 app.clone(),
+                a.clone(),
                 change.entity_id.clone(),
                 change.context.clone(),
             );
@@ -510,17 +645,10 @@ fn on_state(app: &Arc<App>, change: &Change) {
                         },
                     }
                 }
-                let t = &app2.automations.items[n].triggers[ti];
-                fire(&app2, n, t, data, Some(ctx));
+                fire(&app2, &a2, &a2.triggers[ti], data, Some(ctx));
             });
-            let key = (n, t.idx, change.entity_id.to_string());
-            if let Some(old) = app
-                .automations
-                .pending
-                .lock()
-                .unwrap()
-                .insert(key, handle.abort_handle())
-            {
+            let key = (t.idx, change.entity_id.to_string());
+            if let Some(old) = a.pending.lock().unwrap().insert(key, handle.abort_handle()) {
                 old.abort();
             }
         }
@@ -528,8 +656,7 @@ fn on_state(app: &Arc<App>, change: &Change) {
 }
 
 /// HA's `mqtt_automation_listener`.
-fn on_mqtt(app: &Arc<App>, n: usize, ti: usize, msg: &crate::mqtt::Message) {
-    let a = &app.automations.items[n];
+fn on_mqtt(app: &Arc<App>, a: &Arc<Automation>, ti: usize, msg: &crate::mqtt::Message) {
     let t = &a.triggers[ti];
     let Kind::Mqtt {
         topic,
@@ -583,7 +710,7 @@ fn on_mqtt(app: &Arc<App>, n: usize, ti: usize, msg: &crate::mqtt::Message) {
     if let Some(j) = json_payload {
         data.insert("payload_json".into(), j);
     }
-    fire(app, n, t, data, None);
+    fire(app, a, t, data, None);
 }
 
 /// The first instant after `after` whose wall-clock time in `tz` is `at`.
@@ -598,7 +725,7 @@ fn next_time(tz: &crate::config::Zone, after: DateTime<Utc>, at: NaiveTime) -> D
 }
 
 /// A time trigger's timer (HA's `async_track_time_change`), firing at `at` local time daily.
-async fn time_trigger(app: Arc<App>, n: usize, ti: usize, at: NaiveTime) {
+async fn time_trigger(app: Arc<App>, a: Arc<Automation>, ti: usize, at: NaiveTime) {
     // In tests the wall clock follows tokio's, so a paused clock can run through a night.
     #[cfg(test)]
     let base = (Utc::now(), tokio::time::Instant::now());
@@ -621,7 +748,6 @@ async fn time_trigger(app: Arc<App>, n: usize, ti: usize, at: NaiveTime) {
         }
         tokio::time::sleep(left).await;
         after = next;
-        let a = &app.automations.items[n];
         let t = &a.triggers[ti];
         let local = next + tz.offset(next);
         if let Kind::Time {
@@ -646,7 +772,7 @@ async fn time_trigger(app: Arc<App>, n: usize, ti: usize, at: NaiveTime) {
         );
         data.insert("description".into(), "time".into());
         data.insert("entity_id".into(), Value::Null);
-        fire(&app, n, t, data, None);
+        fire(&app, &a, t, data, None);
     }
 }
 
@@ -747,12 +873,13 @@ pub async fn call_service(
 ) -> Result<Outcome, (&'static str, String)> {
     match service {
         "turn_on" | "turn_off" | "toggle" | "trigger" => {}
-        // shortcut: reloading re-reads configuration.yaml; restart lean-home instead for now.
         "reload" => {
-            return Err((
-                "home_assistant_error",
-                "Reloading automations is not supported yet".into(),
-            ));
+            return app
+                .automations
+                .reload(app, data["id"].as_str())
+                .await
+                .map(|_| Outcome::default())
+                .map_err(|e| ("home_assistant_error", e));
         }
         _ => {
             return Err((
@@ -769,7 +896,7 @@ pub async fn call_service(
     let all = ids.iter().any(|i| i == "all");
     let mut child = None;
     // shortcut: one entity after the other; HA calls them concurrently.
-    for (n, a) in autos.items.iter().enumerate() {
+    for a in autos.all() {
         let e = &a.entity;
         // An entity service skips unavailable entities.
         if !e.available() || !(all || ids.contains(&e.entity_id)) {
@@ -785,7 +912,7 @@ pub async fn call_service(
                 let mut vars = data["variables"].as_object().cloned().unwrap_or_default();
                 vars.insert("trigger".into(), json!({"platform": null}));
                 let skip = data["skip_condition"].as_bool().unwrap_or(true);
-                let run = trigger(app, a, vars, Some(&ctx), skip).await;
+                let run = trigger(app, &a, vars, Some(&ctx), skip).await;
                 child = run.map(|r| ("automation", e.item_id.clone(), r));
             }
             _ if on => {
@@ -794,7 +921,7 @@ pub async fn call_service(
             }
             _ => {
                 e.set_enabled(false);
-                autos.cancel_pending(n);
+                a.cancel_pending();
                 if data["stop_actions"].as_bool().unwrap_or(true) {
                     e.stop().await;
                 }
@@ -994,8 +1121,8 @@ mod tests {
             payload: payload.into(),
             qos: 0,
         };
-        on_mqtt(&app, 1, 0, &msg("release")); // not the wanted payload
-        on_mqtt(&app, 1, 0, &msg("press"));
+        on_mqtt(&app, &app.automations.all()[1], 0, &msg("release")); // not the wanted payload
+        on_mqtt(&app, &app.automations.all()[1], 0, &msg("press"));
         settle().await;
         let mut got = vec![];
         while let Ok(c) = rx.try_recv() {
