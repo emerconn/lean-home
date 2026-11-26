@@ -14,6 +14,7 @@ COPY crates/lean-home/Cargo.toml crates/lean-home/Cargo.toml
 # Pre-build dependencies in their own layer so code changes only recompile lean-home
 # (GHA layer caching persists image layers, not BuildKit cache mounts).
 RUN mkdir -p crates/lean-home/src \
+ && printf '\n[lints.cargo]\nunused_dependencies = "allow"\n' >> crates/lean-home/Cargo.toml \
  && echo 'fn main() {}' > crates/lean-home/src/main.rs \
  && cargo build --release --locked \
  && rm -rf crates/lean-home/src target/release/build/lean-home target/release/lean-home*
