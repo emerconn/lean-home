@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "core.restore_state",
+  "data": [
+    {
+      "state": {"entity_id":"conversation.home_assistant","state":"unknown","attributes":{"friendly_name":"Home Assistant","supported_features":1},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": null
+    },
+    {
+      "state": {"entity_id":"script.blink","state":"off","attributes":{"last_triggered":"<ts>","mode":"single","current":0,"friendly_name":"Blink"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":"<hex32>"}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"person.dev","state":"unknown","attributes":{"editable":true,"id":"dev","device_trackers":[],"in_zones":[],"user_id":"<hex32>","friendly_name":"Dev"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"tts.google_translate_en_com","state":"unknown","attributes":{"friendly_name":"Google Translate en com"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"automation.fan_lights_ceiling","state":"on","attributes":{"id":"1700000000001","last_triggered":"<ts>","mode":"single","current":0,"friendly_name":"Fan lights ceiling"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":"<ulid>","user_id":null}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"automation.button_blinks_desk","state":"on","attributes":{"id":"1700000000002","last_triggered":"<ts>","mode":"queued","current":0,"max":10,"friendly_name":"Button blinks desk"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"binary_sensor.demo_device_front_door","state":"off","attributes":{"device_class":"door","friendly_name":"Demo Device Front door"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"event.backup_automatic_backup","state":"unknown","attributes":{"event_types":["completed","failed","in_progress"],"event_type":null,"friendly_name":"Backup Automatic backup"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "last_event_type": null,
+        "last_event_attributes": null
+      },
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"light.demo_device_ceiling","state":"off","attributes":{"supported_color_modes":["brightness"],"color_mode":null,"brightness":null,"friendly_name":"Demo Device Ceiling","supported_features":0},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":"<hex32>"}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"light.demo_device_desk","state":"on","attributes":{"supported_color_modes":["brightness"],"color_mode":"brightness","brightness":null,"friendly_name":"Demo Device Desk","supported_features":40},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":"<ulid>","user_id":null}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"sensor.demo_device_temperature","state":"22.0","attributes":{"state_class":"measurement","unit_of_measurement":"°C","device_class":"temperature","friendly_name":"Demo Device Temperature"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":null}},
+      "extra_data": {
+        "native_value": "22.0",
+        "native_unit_of_measurement": "°C"
+      },
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"switch.demo_device_fan","state":"on","attributes":{"friendly_name":"Demo Device Fan"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":"<hex32>"}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"automation.nightly_off","state":"off","attributes":{"id":"1700000000003","last_triggered":null,"mode":"single","current":0,"friendly_name":"Nightly off"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":null}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"automation.door_closed_desk_on","state":"on","attributes":{"id":"1700000000004","last_triggered":"<ts>","mode":"single","current":0,"friendly_name":"Door closed desk on"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":"<ulid>","user_id":null}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    },
+    {
+      "state": {"entity_id":"script.wave","state":"off","attributes":{"last_triggered":"<ts>","mode":"single","current":0,"friendly_name":"Wave"},"last_changed":"<ts>","last_reported":"<ts>","last_updated":"<ts>","context":{"id":"<ulid>","parent_id":null,"user_id":"<hex32>"}},
+      "extra_data": null,
+      "last_seen": "<ts>",
+      "entity_registry_id": "<hex32>"
+    }
+  ]
+}

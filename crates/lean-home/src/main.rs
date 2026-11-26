@@ -6,6 +6,7 @@ mod editor;
 mod http;
 mod mqtt;
 mod registry;
+mod restore;
 mod script;
 mod services;
 mod state;
@@ -36,6 +37,7 @@ pub struct App {
     pub config: config::Config,
     pub scripts: script::Scripts,
     pub automations: automation::Automations,
+    pub restore: restore::Restore,
     /// Script and automation run traces.
     pub traces: trace::Traces,
 }
@@ -51,8 +53,10 @@ impl App {
         );
         let registry = registry::Registry::load(config_dir)?;
         let states: Arc<state::States> = Arc::default();
-        let scripts = script::Scripts::load(&config.scripts, &registry, &states);
-        let automations = automation::Automations::load(&config.automations, &registry, &states);
+        let restore = restore::Restore::load(config_dir);
+        let scripts = script::Scripts::load(&config.scripts, &registry, &states, &restore);
+        let automations =
+            automation::Automations::load(&config.automations, &registry, &states, &restore);
         let app = Self {
             config,
             auth: auth::Auth::load(config_dir)?,
@@ -63,6 +67,7 @@ impl App {
             mqtt: OnceLock::new(),
             scripts,
             automations,
+            restore,
             traces: trace::Traces::default(),
         };
         if demo {
@@ -166,6 +171,7 @@ fn main() {
             let _ = app.mqtt.set(mqtt::Mqtt::start(app.clone(), settings));
         }
         automation::start(&app);
+        restore::start(&app);
         let listener = tokio::net::TcpListener::bind(listen)
             .await
             .unwrap_or_else(|e| exit(&format!("{listen}: {e}")));
@@ -176,6 +182,8 @@ fn main() {
             .with_graceful_shutdown(shutdown_signal())
             .await
             .unwrap_or_else(|e| exit(&e.to_string()));
+        // As HA at EVENT_HOMEASSISTANT_STOP.
+        app.restore.dump(&app);
         if let Some(m) = app.mqtt.get() {
             m.stop().await;
         }

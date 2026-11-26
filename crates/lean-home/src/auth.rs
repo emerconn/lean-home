@@ -500,6 +500,11 @@ pub fn iso_now() -> String {
 
 /// HA's Store writes: atomic, owner-only (the file holds token secrets).
 fn write_private(path: &Path, value: &Value) -> std::io::Result<()> {
+    write_store(path, value, true)
+}
+
+/// A `.storage` file, as HA's Store writes it: atomic; `private` (0600) for secrets, else 0644.
+pub(crate) fn write_store(path: &Path, value: &Value, private: bool) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let tmp = path.with_extension("lean-home-tmp");
@@ -507,7 +512,7 @@ fn write_private(path: &Path, value: &Value) -> std::io::Result<()> {
         .write(true)
         .create(true)
         .truncate(true)
-        .mode(0o600)
+        .mode(if private { 0o600 } else { 0o644 })
         .open(&tmp)?;
     f.write_all(&serde_json::to_vec_pretty(value)?)?;
     f.sync_all()?;

@@ -72,7 +72,7 @@ if [ "$SCENARIO" = automations ]; then
     docker run --rm -v "$WORK/config:/c:ro" --entrypoint cat "$IMG" "/c/$f.yaml" > "$OUT/$f.saved.yaml"
   done
 fi
-for f in core.config_entries core.entity_registry core.device_registry; do
+for f in core.config_entries core.entity_registry core.device_registry core.restore_state; do
   docker run --rm -v "$WORK/config:/c:ro" --entrypoint cat "$IMG" "/c/.storage/$f" > "$WORK/$f"
   node "$ROOT/compat/norm.mjs" "$URL" "$WORK/$f" "$OUT/$f.json"
 done

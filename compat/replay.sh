@@ -68,4 +68,8 @@ if [ "$SCENARIO" != frontend-load ]; then
   mqtt_jsonl < "$OUT/mqtt.tsv" > "$OUT/mqtt.raw.jsonl"
   node "$ROOT/compat/norm.mjs" "$URL" "$OUT/mqtt.raw.jsonl" "$OUT/mqtt.jsonl"
 fi
+if [ "$SCENARIO" = automations ]; then
+  # What lean-home stored at shutdown, normalized like the recorded file.
+  node "$ROOT/compat/norm.mjs" "$URL" "$OUT/config/.storage/core.restore_state" "$OUT/core.restore_state.json"
+fi
 echo "replay $SCENARIO: $OUT"

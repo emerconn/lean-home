@@ -299,19 +299,30 @@ pub struct Automations {
 
 impl Automations {
     /// From `automation:` in the config; writes each entity's initial state.
-    pub fn load(config: &[Value], registry: &crate::registry::Registry, states: &States) -> Self {
+    pub fn load(
+        config: &[Value],
+        registry: &crate::registry::Registry,
+        states: &States,
+        restore: &crate::restore::Restore,
+    ) -> Self {
         let mut items: Vec<Arc<Automation>> = vec![];
         for (n, raw) in config.iter().enumerate() {
             let taken = |eid: &str| items.iter().any(|a| a.entity.entity_id == eid);
             let a = Automation::new(n, raw, registry, &taken);
+            a.entity.restore_from(restore, registry);
             a.entity.write(states);
             items.push(Arc::new(a));
         }
-        // shortcut: on/off and last_triggered aren't restored across restarts (HA's
-        // RestoreEntity); add with the recorder step.
         Self {
             items: RwLock::new(items),
         }
+    }
+
+    pub fn entity_ids(&self) -> Vec<String> {
+        self.all()
+            .iter()
+            .map(|a| a.entity.entity_id.clone())
+            .collect()
     }
 
     fn all(&self) -> Vec<Arc<Automation>> {
@@ -376,13 +387,15 @@ impl Automations {
         for a in &old {
             if !next.iter().any(|b| Arc::ptr_eq(a, b)) {
                 a.unload().await;
+                a.entity.forget(app);
                 a.entity.write_removed(&app.states);
             }
         }
         *self.items.write().unwrap() = next;
         for (a, prev) in added {
-            if let Some(p) = &prev {
-                a.entity.restore(&p.entity);
+            match &prev {
+                Some(p) => a.entity.restore(&p.entity),
+                None => a.entity.restore_from(&app.restore, &app.registry),
             }
             a.entity.write(&app.states);
             arm(app, &a);
@@ -401,6 +414,7 @@ impl Automations {
         };
         for a in gone {
             a.unload().await;
+            a.entity.forget(app);
             app.states.remove(&a.entity.entity_id);
         }
     }
@@ -1304,7 +1318,12 @@ mod tests {
             json!({"alias": "Bad", "triggers": [{"trigger": "sun"}], "actions": []}),
             json!({"triggers": [], "actions": [], "initial_state": false}),
         ];
-        Automations::load(&cfg, &reg, &states);
+        Automations::load(
+            &cfg,
+            &reg,
+            &states,
+            &crate::restore::Restore::load(std::path::Path::new("/nonexistent")),
+        );
         let bad = states.get("automation.bad").unwrap();
         assert_eq!(bad.state, "unavailable");
         let unnamed = states.get("automation.automation_1").unwrap();
