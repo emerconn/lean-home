@@ -317,8 +317,20 @@ to the CI replay.
      `compare.py` now also follows entities added and removed after the page loaded, and
      compares the saved files. Measured on the dev PC (single run, `RssAnon`): stripped binary
      +142 KiB (7.40 → 7.55 MB); idle anon memory 1076 → 1092 KiB, single-run noise.
-   - **Next: packages** (below). Add the template helpers and actions automations need from
-     "Deferred" below.
+   - **Packages.** (Done: `merge_packages` in `config.rs`.) `homeassistant: packages:` is merged
+     as HA's `merge_packages_config` does: `automation` entries appended (falsy ones dropped, a
+     single mapping made a list, labelled keys like `automation extra` kept), `script` keys
+     merged recursively, a package whose name isn't a slug skipped, a dict domain given a list
+     refused, and HA's quirk kept (a later key's result hides a duplicate key it found, so
+     `script.blink` in a package merges into the main one without an error). Recorded first:
+     `compat/packages/` loaded by HA's own `async_hass_config_yaml` in the image
+     (`compat/fixtures/packages/merged.json`, the merged keys and HA's errors); lean-home gives
+     the same keys in the same order and the same messages. Automations and scripts in packages
+     load and reload like any other; the editors don't change them (HA's only edit
+     `automations.yaml`/`scripts.yaml`). Measured like for like against `main` (release, stripped):
+     7.55 → 7.48 MB, the compiler laying code out differently rather than a saving.
+   - **Next: the HA 2026.11.3 upgrade** (below). Add the template helpers and actions
+     automations need from "Deferred" below.
 
 Measure memory and binary size before and after, as for steps 0 and 1.
 
@@ -326,8 +338,7 @@ Measure memory and binary size before and after, as for steps 0 and 1.
 
 In order; each is its own PR, branched from `main` after the previous one merges.
 
-1. **Packages** (`homeassistant: packages:`), so automations defined in them load.
-2. **Upgrade to HA 2026.11.3** with the checklist in [compatibility](compatibility.md): Renovate
+1. **Upgrade to HA 2026.11.3** with the checklist in [compatibility](compatibility.md): Renovate
    opens that PR on its Monday run and it stays red until the fixtures are re-recorded.
 
 Also open, not step 2: release-plz's PR #9 (`chore: release v0.0.0`) is waiting for a
@@ -377,7 +388,7 @@ Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the
 | `render_template` has no rate limit (HA: 1/s for domain listeners, 1/min for all states) | If a dashboard iterating all states proves costly | Re-rendering on every change is correct, only more work |
 | Registries are read-only: new MQTT entities, and automations and scripts created in the editor, aren't written to `core.entity_registry` (HA later picks the same ids, normally; a renamed alias would give HA's and lean-home's different entity ids) | Step 5 | Needed once lean-home renames entities or assigns areas itself, i.e. with config flows; writing HA's file needs care not to corrupt it |
 | HA's opt-in IP ban (`http: login_attempts_threshold`, `ip_bans.yaml`) | Now unblocked (2.3 parses `configuration.yaml`); when a user asks | Off by default in HA too; lean-home already serializes password checks and backs off per IP |
-| Packages (`homeassistant: packages:`): merged into the config by HA; lean-home warns and ignores them, so automations in packages are missing | Next in step 2, after the editors | Power users' configs use them; HA's merge rules per domain need care |
+| Packages: only `automation` and `script` are merged (the domains lean-home reads); a package's other domains are left out, with no error where HA would log one; error messages don't name the file and line as HA's do | Each domain with the integration that reads it | Nothing reads the other domains yet; the merge rules are in `merge_hint` |
 | Blueprints: `!input` loads as a `{"!input": name}` marker, `use_blueprint` automations aren't expanded | By demand, now that automations run | Blueprint automations are common, but need the automation engine first |
 | YAML corner cases: non-string keys become Python's `str()` of them (`1:` → `"1"`), `.inf`/`.nan` become strings, dates become strings rather than date objects; so an editor save writes such a value back quoted (`'2026-11-25'`, `'1': x`) where HA writes it as it was | When a config needs them | JSON has no such keys or numbers; HA configs quote dates where they matter |
 | `homeassistant:` keys beyond location and units (`customize`, `allowlist_external_dirs`, `media_dirs`, `auth_providers`…) | With the features that use them | Nothing reads them yet |

@@ -1,0 +1,64 @@
+{
+  "config": {
+    "automation": [
+      {
+        "id": "1",
+        "alias": "From automations.yaml",
+        "triggers": [],
+        "actions": []
+      },
+      {
+        "id": "2",
+        "alias": "From the lights package",
+        "triggers": [],
+        "actions": []
+      },
+      {
+        "id": "3",
+        "alias": "A single automation, not a list",
+        "triggers": [],
+        "actions": []
+      }
+    ],
+    "automation manual": [
+      {
+        "alias": "Labelled key in the main config",
+        "triggers": [],
+        "actions": []
+      }
+    ],
+    "script": {
+      "blink": {
+        "alias": "Blink",
+        "sequence": [
+          {
+            "delay": 1
+          },
+          {
+            "delay": 2
+          }
+        ],
+        "mode": "queued"
+      },
+      "dupe_only": {
+        "sequence": []
+      },
+      "wave": {
+        "alias": "Wave",
+        "sequence": []
+      }
+    },
+    "automation extra": [
+      {
+        "id": "4",
+        "alias": "Under a labelled key",
+        "triggers": [],
+        "actions": []
+      }
+    ]
+  },
+  "errors": [
+    "Setup of package 'Bad Name' at packages/Bad Name.yaml, line 2 failed: Invalid package definition 'Bad Name': invalid slug Bad Name (try bad_name). Package will not be initialized",
+    "Setup of package 'not_dict' at packages/not_dict.yaml, line 2 failed: integration 'script' cannot be merged, expected a dict"
+  ]
+}

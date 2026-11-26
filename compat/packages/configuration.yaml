@@ -1,0 +1,13 @@
+# Packages as HA merges them (compat/packages-config.py records HA's result).
+homeassistant:
+  packages: !include_dir_named packages
+automation: !include automations.yaml
+automation manual:
+  - alias: Labelled key in the main config
+    triggers: []
+    actions: []
+script:
+  blink:
+    alias: Blink
+    sequence:
+      - delay: 1

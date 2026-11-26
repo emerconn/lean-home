@@ -243,7 +243,7 @@ impl Zone {
 pub fn load(config_dir: &Path) -> Result<Config, String> {
     let secrets = Secrets::new(config_dir);
     let path = config_dir.join("configuration.yaml");
-    let root = match load_yaml(&path, Some(&secrets)) {
+    let mut root = match load_yaml(&path, Some(&secrets)) {
         Ok(Value::Object(m)) => m,
         Ok(Value::Null) => Map::new(),
         Ok(_) => return Err(format!("{}: does not contain a dict", path.display())),
@@ -255,9 +255,10 @@ pub fn load(config_dir: &Path) -> Result<Config, String> {
         Some(Value::Null) | None => Map::new(),
         Some(_) => return Err("homeassistant: expected a dictionary".into()),
     };
-    if ha.contains_key("packages") {
-        // shortcut: packages aren't merged yet; automations and scripts in them are missing.
-        eprintln!("config: homeassistant.packages is not supported yet; its contents are ignored");
+    if let Some(packages) = ha.get("packages") {
+        for e in merge_packages(&mut root, packages) {
+            eprintln!("config: {e}");
+        }
     }
     let storage = std::fs::read_to_string(config_dir.join(".storage/core.config"))
         .ok()
@@ -286,6 +287,145 @@ pub fn load(config_dir: &Path) -> Result<Config, String> {
         }
     }
     Ok(config)
+}
+
+/// How HA merges a package's domain into the main config: a list domain's entries are appended,
+/// a dict domain's keys merged (each integration says which; `PACKAGE_MERGE_HINT`).
+// shortcut: only the domains lean-home reads are merged (`automation` lists, `script` dicts);
+// the others stay in the packages, which nothing reads yet. Add each with its integration.
+fn merge_hint(domain: &str) -> Option<bool> {
+    match domain {
+        "automation" => Some(true),
+        "script" => Some(false),
+        _ => None,
+    }
+}
+
+/// HA's `merge_packages_config`: merge `homeassistant: packages:` into `root`; returns the error
+/// messages HA logs.
+// shortcut: messages don't name the file and line as HA's do (the loader keeps no positions);
+// add when the loader tracks them.
+fn merge_packages(root: &mut Map<String, Value>, packages: &Value) -> Vec<String> {
+    let mut errors = vec![];
+    let Some(packages) = packages
+        .as_object()
+        .filter(|p| p.values().all(|v| v.is_object() || v.is_array()))
+    else {
+        return vec![
+            "Invalid package configuration 'packages': expected a dictionary of packages".into(),
+        ];
+    };
+    for (name, pack) in packages {
+        let fail = |msg: String| format!("Setup of package '{name}' failed: {msg}");
+        let slug = crate::mqtt::slugify(name);
+        let definition = if slug != *name {
+            Err(format!("invalid slug {name} (try {slug})"))
+        } else if !pack.is_object() {
+            Err("expected a dictionary".to_string())
+        } else {
+            Ok(())
+        };
+        if let Err(e) = definition {
+            errors.push(fail(format!(
+                "Invalid package definition '{name}': {e}. Package will not be initialized"
+            )));
+            continue;
+        }
+        for (comp, conf) in pack.as_object().into_iter().flatten() {
+            if comp == "homeassistant" {
+                continue;
+            }
+            let domain = comp.split(' ').next().unwrap_or_default();
+            let Some(list) = merge_hint(domain) else {
+                continue;
+            };
+            if list {
+                let mut merged = ensure_list(root.get(comp));
+                merged.extend(ensure_list(Some(conf)));
+                merged.retain(truthy);
+                root.insert(comp.clone(), merged.into());
+                continue;
+            }
+            let conf = match conf {
+                Value::Null => Map::new(),
+                Value::Object(m) => m.clone(),
+                _ => {
+                    errors.push(fail(format!(
+                        "integration '{comp}' cannot be merged, expected a dict"
+                    )));
+                    continue;
+                }
+            };
+            let target = root.entry(comp.clone()).or_insert(Value::Null);
+            if target.is_null() {
+                *target = Map::new().into();
+            }
+            let Value::Object(target) = target else {
+                errors.push(fail(format!(
+                    "integration '{comp}' cannot be merged, dict expected in main config"
+                )));
+                continue;
+            };
+            if let Some(dup) = recursive_merge(target, &conf) {
+                errors.push(fail(format!(
+                    "integration '{comp}' has duplicate key '{dup}'"
+                )));
+            }
+        }
+    }
+    errors
+}
+
+/// HA's `_recursive_merge`, quirks included: a duplicate scalar stops that mapping's merge (what
+/// came before it stays merged), and a later key's result overwrites the duplicate found.
+fn recursive_merge(conf: &mut Map<String, Value>, package: &Map<String, Value>) -> Option<String> {
+    let mut duplicate = None;
+    for (key, pack) in package {
+        match pack {
+            Value::Object(p) if p.is_empty() => continue,
+            Value::Object(p) => {
+                let entry = conf.entry(key.clone()).or_insert_with(|| Map::new().into());
+                if !entry.is_object() {
+                    *entry = Map::new().into();
+                }
+                duplicate = recursive_merge(entry.as_object_mut().unwrap(), p);
+            }
+            Value::Array(_) => {
+                let mut merged = ensure_list(conf.get(key));
+                merged.extend(ensure_list(Some(pack)));
+                merged.retain(truthy);
+                conf.insert(key.clone(), merged.into());
+            }
+            _ => {
+                if conf.get(key).is_some_and(|v| !v.is_null()) {
+                    return Some(key.clone());
+                }
+                conf.insert(key.clone(), pack.clone());
+            }
+        }
+    }
+    duplicate
+}
+
+/// `vol.EnsureList`: nothing is an empty list, a single value a list of one.
+fn ensure_list(v: Option<&Value>) -> Vec<Value> {
+    match v {
+        None | Some(Value::Null) => vec![],
+        Some(Value::Array(a)) => a.clone(),
+        Some(one) => vec![one.clone()],
+    }
+}
+
+/// Python truthiness, for `cv.remove_falsy`.
+fn truthy(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64() != Some(0.0),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(m) => !m.is_empty(),
+    }
 }
 
 /// `automation`, or `automation <label>` (HA lets one domain appear under several keys).
@@ -893,6 +1033,46 @@ fn yaml11_timestamp(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `compat/packages/`, merged as HA's loader merged it (`compat/fixtures/packages/`): the
+    /// same automation and script keys, and the same errors (HA's also name file and line).
+    #[test]
+    fn packages_merge_like_ha() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../compat");
+        let want: Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("fixtures/packages/merged.json")).unwrap(),
+        )
+        .unwrap();
+        let dir = root.join("packages");
+        let Value::Object(mut config) = load_yaml(&dir.join("configuration.yaml"), None).unwrap()
+        else {
+            panic!("configuration.yaml is a mapping")
+        };
+        let packages = config["homeassistant"]["packages"].clone();
+        let errors = merge_packages(&mut config, &packages);
+        let got: Map<String, Value> = config
+            .into_iter()
+            .filter(|(k, _)| domain_key(k, "automation") || domain_key(k, "script"))
+            .collect();
+        // As text: map equality ignores key order, and the order is what HA ends with too.
+        assert_eq!(
+            serde_json::to_string(&got).unwrap(),
+            serde_json::to_string(&want["config"]).unwrap()
+        );
+        let tails = |e: &str| e.split_once("failed: ").map(|(_, t)| t.to_string());
+        assert_eq!(
+            errors.iter().filter_map(|e| tails(e)).collect::<Vec<_>>(),
+            want["errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|e| tails(e.as_str().unwrap()))
+                .collect::<Vec<_>>()
+        );
+        // and load() hands them on: 3 + the labelled keys' 1 + 1 automations, 3 scripts
+        let c = load(&dir).unwrap();
+        assert_eq!((c.automations.len(), c.scripts.len()), (5, 3));
+    }
 
     fn dir(files: &[(&str, &str)]) -> PathBuf {
         let d =

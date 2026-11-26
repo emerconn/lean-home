@@ -57,6 +57,20 @@ new script is added and run, both are deleted, and one is read back (404). Same 
 Re-record with `compat/capture-mqtt.sh automations`. Two recordings differ only in set-ordered data,
 e.g. `render_template`'s `listeners.entities`. In CI.
 
+## Packages
+
+`fixtures/packages/merged.json` is HA's own config loader (`async_hass_config_yaml`, which merges
+`homeassistant: packages:`) run on `compat/packages/`: a main config with automations and a
+script, and packages that append automations, merge scripts (one into a script the main config
+has), use labelled keys, have empty or falsy entries, and two that HA refuses (a name that isn't a
+slug, a script list). It holds the automation and script keys HA ends with and the errors it logs;
+`config.rs` must merge the same. Regenerate with:
+
+```bash
+docker run --rm -i -v "$PWD/compat/packages:/c:ro" --entrypoint python3 "$HA_IMAGE" - \
+  < compat/packages-config.py > compat/fixtures/packages/merged.json
+```
+
 ## YAML dump cases
 
 `fixtures/yaml-dump/cases.jsonl` is HA's own YAML dumper (annotatedyaml's `dump`, as the config

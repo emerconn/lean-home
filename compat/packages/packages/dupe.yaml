@@ -1,0 +1,10 @@
+# script.blink exists in the main config: its mapping merges recursively; the list key
+# concatenates, the scalar `alias` collides (an error, after `mode` was merged).
+script:
+  blink:
+    mode: queued
+    sequence:
+      - delay: 2
+    alias: Blink again
+  dupe_only:
+    sequence: []
