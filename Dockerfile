@@ -16,9 +16,10 @@ COPY crates/lean-home/Cargo.toml crates/lean-home/Cargo.toml
 RUN mkdir -p crates/lean-home/src \
  && echo 'fn main() {}' > crates/lean-home/src/main.rs \
  && cargo build --release --locked \
- && rm -rf crates/lean-home/src target/release/.fingerprint/lean-home-* target/release/deps/lean_home* target/release/lean-home*
+ && rm -rf crates/lean-home/src target/release/build/lean-home target/release/lean-home*
 COPY crates ./crates
-RUN cargo build --release --locked --offline \
+RUN touch crates/lean-home/src/main.rs \
+ && cargo build --release --locked --offline \
  && strip -o /lean-home target/release/lean-home \
  && rm -rf target
 
