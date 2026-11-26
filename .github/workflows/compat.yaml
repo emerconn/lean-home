@@ -26,11 +26,11 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      # Docs-only changes can't affect the build or the replay. A failing git diff fails the job (bash -e).
+      # Docs and agent/IDE config changes can't affect the build or the replay. A failing git diff fails the job (bash -e).
       - id: diff
         run: |
           files=$(git diff --name-only "${{ github.event.pull_request.base.sha || github.event.before }}" HEAD)
-          if grep -qvE '^docs/|\.md$' <<< "$files"; then echo code=true >> "$GITHUB_OUTPUT"; fi
+          if grep -qvE '^docs/|^\.(agents|serena|claude)/|\.md$' <<< "$files"; then echo code=true >> "$GITHUB_OUTPUT"; fi
 
   # Replay the recorded HA sessions (compat/fixtures) against lean-home and diff the results. One job for all
   # scenarios: as parallel jobs each paid the setup and a cold Chromium, and the total got slower.
