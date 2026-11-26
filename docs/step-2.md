@@ -185,3 +185,16 @@ first: HA's file after the `automations` scenario
 `.storage` files); lean-home restores from it, and after the replay its own file has the
 same automation and script entries, the two the editors deleted included (`compare.py`).
 Measured (release, stripped): 7.48 → 7.58 MB.
+
+## timedelta and last_reported
+
+(Done: `crates/lean-home/src/template.rs`, `crates/lean-home/src/state.rs`.) Added Python's
+`timedelta` object (`days`, `seconds`, `microseconds`, `total_seconds()`, comparison, truthiness,
+and Python `str()` formatting, plus rejecting it in `to_json`), `as_timedelta` (ISO 8601 and
+`HH:MM:SS` duration parsing, global and filter), and `timedelta_string` (with `precision`, global
+and filter). Added `last_reported` to `State` so unchanged `States::set` calls advance
+`last_reported` without emitting a `state_changed` event, and exposed `last_reported` on
+`TemplateState` (`get_value` and `enumerate`). Checked against HA's template corpus:
+`ha_template_cases` now compares 212 of 611 cases (+17 for `timedelta`, `as_timedelta`, and
+`timedelta_string`) with 0 differences, plus unit tests in `state.rs` and `template.rs`. Binary
+size and memory measurements were not taken separately for this change.

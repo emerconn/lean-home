@@ -764,7 +764,8 @@ impl Object for TemplateState {
             "state" => Value::from(s.state.as_str()),
             "attributes" => ser(&s.attributes),
             "last_changed" => Value::from_object(Dt::utc(s.last_changed)),
-            "last_updated" | "last_reported" => Value::from_object(Dt::utc(s.last_updated)),
+            "last_updated" => Value::from_object(Dt::utc(s.last_updated)),
+            "last_reported" => Value::from_object(Dt::utc(s.last_reported)),
             "context" => ser(s.context.json()),
             "domain" => Value::from(domain),
             "object_id" => Value::from(object_id),
@@ -789,6 +790,7 @@ impl Object for TemplateState {
             "attributes",
             "last_changed",
             "last_updated",
+            "last_reported",
             "context",
             "domain",
             "object_id",
@@ -883,10 +885,86 @@ impl Object for Dt {
     }
 }
 
-/// What orjson refuses: datetimes and state objects (`TypeError` in HA).
+/// Python's `datetime.timedelta`, stored as signed microseconds.
+#[derive(Debug)]
+struct Td(i128);
+
+const US_PER_SEC: i128 = 1_000_000;
+const US_PER_DAY: i128 = 86_400 * US_PER_SEC;
+
+impl Object for Td {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Plain
+    }
+
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        let days = self.0.div_euclid(US_PER_DAY);
+        let rem = self.0.rem_euclid(US_PER_DAY);
+        Some(Value::from(match key.as_str()? {
+            "days" => days as i64,
+            "seconds" => (rem / US_PER_SEC) as i64,
+            "microseconds" => (rem % US_PER_SEC) as i64,
+            _ => return None,
+        }))
+    }
+
+    fn call_method(
+        self: &Arc<Self>,
+        _: &mut Vm<'_, '_>,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value, Error> {
+        match method {
+            "total_seconds" => {
+                let (): () = minijinja::value::from_args(args)?;
+                Ok((self.0 as f64 / 1e6).into())
+            }
+            _ => Err(Error::from(ErrorKind::UnknownMethod)),
+        }
+    }
+
+    fn is_true(self: &Arc<Self>) -> bool {
+        self.0 != 0
+    }
+
+    fn custom_cmp(
+        self: &Arc<Self>,
+        other: &minijinja::value::DynObject,
+    ) -> Option<std::cmp::Ordering> {
+        other.downcast_ref::<Td>().map(|o| self.0.cmp(&o.0))
+    }
+
+    /// `str(timedelta)`: `[[-]D day[s], ]H:MM:SS[.ffffff]`.
+    fn render(self: &Arc<Self>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let days = self.0.div_euclid(US_PER_DAY);
+        let rem = self.0.rem_euclid(US_PER_DAY);
+        let secs = rem / US_PER_SEC;
+        let us = rem % US_PER_SEC;
+        if days != 0 {
+            let unit = if days.abs() == 1 { "day" } else { "days" };
+            write!(f, "{days} {unit}, ")?;
+        }
+        write!(
+            f,
+            "{}:{:02}:{:02}",
+            secs / 3600,
+            (secs % 3600) / 60,
+            secs % 60
+        )?;
+        if us != 0 {
+            write!(f, ".{us:06}")?;
+        }
+        Ok(())
+    }
+}
+
+/// What orjson refuses: datetimes, timedeltas and state objects (`TypeError` in HA).
 fn unserializable(v: &Value) -> Option<&'static str> {
     if v.downcast_object_ref::<Dt>().is_some() {
         return Some("datetime.datetime");
+    }
+    if v.downcast_object_ref::<Td>().is_some() {
+        return Some("datetime.timedelta");
     }
     if v.downcast_object_ref::<TemplateState>().is_some() {
         return Some("TemplateState");
@@ -1093,6 +1171,110 @@ fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
     .map(|n| local_tz().local_to_utc(n))
 }
 
+fn parse_duration(s: &str) -> Option<Td> {
+    let s = s.trim();
+    let (sign, rest) = match s.strip_prefix('-') {
+        Some(r) => (-1.0, r),
+        None => (1.0, s.strip_prefix('+').unwrap_or(s)),
+    };
+    if let Some(iso) = rest.strip_prefix('P') {
+        let mut secs = 0.0f64;
+        let mut any = false;
+        let (date_part, time_part) = match iso.split_once('T') {
+            Some((d, t)) => {
+                if t.is_empty() {
+                    return None;
+                }
+                (d, Some(t))
+            }
+            None => (iso, None),
+        };
+        let mut p = date_part;
+        if let Some((num, tail)) = p.split_once('W') {
+            secs += num.replace(',', ".").parse::<f64>().ok()? * 7.0 * 86_400.0;
+            any = true;
+            p = tail;
+        }
+        if let Some((num, tail)) = p.split_once('D') {
+            secs += num.replace(',', ".").parse::<f64>().ok()? * 86_400.0;
+            any = true;
+            p = tail;
+        }
+        if !p.is_empty() {
+            return None;
+        }
+        if let Some(mut t) = time_part {
+            for (unit, mult) in [('H', 3600.0), ('M', 60.0), ('S', 1.0)] {
+                if let Some((num, tail)) = t.split_once(unit) {
+                    secs += num.replace(',', ".").parse::<f64>().ok()? * mult;
+                    any = true;
+                    t = tail;
+                }
+            }
+            if !t.is_empty() {
+                return None;
+            }
+        }
+        return any.then(|| Td((sign * secs * 1e6).round_ties_even() as i128));
+    }
+    let (days, hms) = match rest.split_once(' ') {
+        Some((d, t)) => (d.parse::<f64>().ok()?, t),
+        None => (0.0, rest),
+    };
+    let mut parts = hms.split(':');
+    let h = parts.next()?.parse::<f64>().ok()?;
+    let m = parts.next()?.parse::<f64>().ok()?;
+    let sec = match parts.next() {
+        Some(sec) => sec.parse::<f64>().ok()?,
+        None => 0.0,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    let total = days * 86_400.0 + h * 3600.0 + m * 60.0 + sec;
+    Some(Td((sign * total * 1e6).round_ties_even() as i128))
+}
+
+fn format_timedelta_string(td: &Td, precision: usize) -> String {
+    let mut rem = (td.0 as f64 / 1e6).abs().round_ties_even() as u64;
+    if rem == 0 {
+        return "0 seconds".into();
+    }
+    const UNITS: [(&str, u64); 7] = [
+        ("year", 365 * 86_400),
+        ("month", 30 * 86_400),
+        ("week", 7 * 86_400),
+        ("day", 86_400),
+        ("hour", 3600),
+        ("minute", 60),
+        ("second", 1),
+    ];
+    let mut parts = Vec::new();
+    for (name, unit) in UNITS {
+        let count = if precision > 0 && parts.len() + 1 == precision && rem >= unit {
+            let rounded = (rem as f64 / unit as f64).round_ties_even() as u64;
+            rem = 0;
+            rounded
+        } else {
+            let c = rem / unit;
+            rem %= unit;
+            c
+        };
+        if count > 0 {
+            let plural = if count == 1 { "" } else { "s" };
+            parts.push(format!("{count} {name}{plural}"));
+            if precision > 0 && parts.len() >= precision {
+                break;
+            }
+        }
+    }
+    if parts.is_empty() {
+        "0 seconds".into()
+    } else {
+        parts.join(" ")
+    }
+}
+
 fn env(strict: bool) -> Environment<'static> {
     let mut env = Environment::new();
     env.set_undefined_behavior(if strict {
@@ -1285,6 +1467,67 @@ fn env(strict: bool) -> Environment<'static> {
     }
     env.add_function("as_timestamp", as_timestamp);
     env.add_filter("as_timestamp", as_timestamp);
+
+    fn timedelta(args: Rest<Value>, kw: Kwargs) -> Result<Value, Error> {
+        const FIELDS: [(&str, f64); 7] = [
+            ("days", 86_400.0 * 1e6),
+            ("seconds", 1e6),
+            ("microseconds", 1.0),
+            ("milliseconds", 1e3),
+            ("minutes", 60.0 * 1e6),
+            ("hours", 3600.0 * 1e6),
+            ("weeks", 7.0 * 86_400.0 * 1e6),
+        ];
+        let mut total_us = 0.0f64;
+        for (i, (name, mult)) in FIELDS.iter().enumerate() {
+            if let Some(v) = arg(&args, i, &kw, name)?
+                && !v.is_none()
+            {
+                let n = to_float(&v).ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::InvalidOperation,
+                        format!("TypeError: unsupported type for timedelta {name} component"),
+                    )
+                })?;
+                total_us += n * mult;
+            }
+        }
+        if args.len() > FIELDS.len() {
+            return Err(Error::new(
+                ErrorKind::TooManyArguments,
+                "timedelta takes at most 7 arguments",
+            ));
+        }
+        kw.assert_all_used()?;
+        Ok(Value::from_object(Td(total_us.round_ties_even() as i128)))
+    }
+    env.add_function("timedelta", timedelta);
+
+    fn as_timedelta(v: Value) -> Value {
+        if v.downcast_object_ref::<Td>().is_some() {
+            return v;
+        }
+        v.as_str()
+            .and_then(parse_duration)
+            .map(Value::from_object)
+            .unwrap_or_else(|| Value::from(()))
+    }
+    env.add_function("as_timedelta", as_timedelta);
+    env.add_filter("as_timedelta", as_timedelta);
+
+    fn timedelta_string(v: Value, args: Rest<Value>, kw: Kwargs) -> Result<Value, Error> {
+        let precision = arg(&args, 0, &kw, "precision")?
+            .and_then(|p| to_int(&p, 10))
+            .and_then(|p| usize::try_from(p).ok())
+            .unwrap_or(1);
+        kw.assert_all_used()?;
+        Ok(match v.downcast_object_ref::<Td>() {
+            Some(td) => Value::from(format_timedelta_string(td, precision)),
+            None => v,
+        })
+    }
+    env.add_function("timedelta_string", timedelta_string);
+    env.add_filter("timedelta_string", timedelta_string);
 
     fn to_json(v: Value, kw: Kwargs) -> Result<String, Error> {
         let pretty: Option<bool> = kw.get("pretty_print")?;
@@ -1693,5 +1936,23 @@ mod tests {
         assert_eq!(p("[1, 2"), json!("[1, 2"));
         assert_eq!(p(""), json!(""));
         assert_eq!(p("## Welcome Dev"), json!("## Welcome Dev"));
+    }
+
+    #[test]
+    fn timedelta_and_last_reported() {
+        assert_eq!(r("{{ timedelta(seconds=120) }}"), "0:02:00");
+        assert_eq!(r("{{ timedelta(days=1, hours=4) }}"), "1 day, 4:00:00");
+        assert_eq!(r("{{ timedelta(seconds=120).total_seconds() }}"), "120.0");
+        assert_eq!(r("{{ as_timedelta('PT10M') }}"), "0:10:00");
+        assert_eq!(r("{{ 'T10M' | as_timedelta }}"), "None");
+        assert_eq!(
+            r("{{ timedelta(hours=1, minutes=30) | timedelta_string }}"),
+            "2 hours"
+        );
+        assert_eq!(
+            r("{{ timedelta(hours=1, minutes=30) | timedelta_string(precision=2) }}"),
+            "1 hour 30 minutes"
+        );
+        assert!(r("{{ states['sensor.temp'].last_reported.isoformat() }}").ends_with("+00:00"));
     }
 }
