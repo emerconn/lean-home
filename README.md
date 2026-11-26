@@ -21,7 +21,7 @@ Goals 1 and 2 are hard requirements. Goal 3 is optimized around them.
 |---|---|---|
 | 0. Frontend loads | Done | The official HA frontend logs in, renders the dashboard and controls entities live. Login uses the HA config dir's own `.storage/auth*`, so tokens work in both directions |
 | 1. MQTT + discovery | Done | HA's MQTT config entry (TCP or TLS) and registries; lights (default and JSON schema), switches, sensors and binary sensors, discovered per component or per device |
-| 2. Automations, scripts, templates | In progress | **Done:** HA's template helpers (`states()`, `float(0)`, `iif`…), checked against HA's own template tests, with live `render_template` and MQTT value templates; `configuration.yaml` with HA's tags (`!include`, `!secret`, `!include_dir_*`), the core config and time zone; scripts (`script.*` entities and services, modes, conditions, `choose`/`if`/`delay`…) and automations (state, MQTT and time triggers, `automation.*` entities and services) with HA's run traces; the automation and script editors (open, save, delete, with reload). **Next:** packages ([what's left](docs/architecture.md#whats-left-in-step-2)) |
+| 2. Automations, scripts, templates | In progress | **Done:** HA's template helpers (`states()`, `float(0)`, `iif`…), checked against HA's own template tests, with live `render_template` and MQTT value templates; `configuration.yaml` with HA's tags (`!include`, `!secret`, `!include_dir_*`) and packages, the core config and time zone; scripts (`script.*` entities and services, modes, conditions, `choose`/`if`/`delay`…) and automations (state, MQTT and time triggers, `automation.*` entities and services) with HA's run traces; the automation and script editors (open, save, delete, with reload). **Next:** the HA 2026.11.3 upgrade ([what's left](docs/architecture.md#whats-left-in-step-2)) |
 | 3–8. History, `mobile_app`, config flows, Python plugins, more integrations, voice | Not started | See the [roadmap](docs/architecture.md#roadmap) |
 
 Compatibility is checked, not assumed: CI replays sessions recorded from real HA
@@ -32,7 +32,7 @@ versions it targets (HA 2026.11.2 today) are pinned in [`compat/versions.env`](c
 Footprint, under the [measurement rules](docs/architecture.md#measurement-rules) (single runs):
 0.6 MiB anon memory idle with MQTT connected and 1.4 MiB with the frontend connected (step 1);
 0.6 MiB idle with a real config loaded (step 2.3), 0.85 MiB after 20 script runs with their
-traces stored (step 2.4, scripts), and a 7.6 MB stripped release binary with automations and the editors.
+traces stored (step 2.4, scripts), and a 7.5 MB stripped release binary with automations, the editors and packages.
 
 ```sh
 # config/ must already be onboarded by HA (lean-home has no onboarding yet); MQTT starts if HA

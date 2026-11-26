@@ -1,0 +1,13 @@
+# One automation as a mapping, a labelled key, and falsy list entries (HA drops them).
+automation:
+  id: "3"
+  alias: A single automation, not a list
+  triggers: []
+  actions: []
+automation extra:
+  - id: "4"
+    alias: Under a labelled key
+    triggers: []
+    actions: []
+  - null
+  - {}

@@ -1,0 +1,6 @@
+# Not a slug: the whole package is skipped.
+automation:
+  - id: "5"
+    alias: Never loaded
+    triggers: []
+    actions: []

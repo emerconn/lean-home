@@ -1,0 +1,14 @@
+# A list domain and a dict domain: appended and merged by key.
+automation:
+  - id: "2"
+    alias: From the lights package
+    triggers: []
+    actions: []
+script:
+  wave:
+    alias: Wave
+    sequence: []
+homeassistant:
+  customize:
+    light.kitchen:
+      icon: mdi:lamp
