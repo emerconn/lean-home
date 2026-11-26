@@ -207,6 +207,21 @@ fn exit(msg: &str) -> ! {
 
 #[cfg(test)]
 #[test]
+fn docker_rust_is_the_toolchain() {
+    let toolchain = include_str!("../../../rust-toolchain.toml");
+    let channel = toolchain
+        .lines()
+        .find_map(|l| l.strip_prefix("channel = "))
+        .map(|c| c.trim_matches('"'))
+        .unwrap();
+    assert!(
+        include_str!("../../../Dockerfile").contains(&format!("FROM rust:{channel}-alpine")),
+        "the Dockerfile's rust image differs from rust-toolchain.toml ({channel})"
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn ha_version_is_the_compat_pin() {
     let pins = include_str!("../../../compat/versions.env");
     assert!(

@@ -58,3 +58,28 @@ jobs:
             echo "| \`lean-home\` | $(size "$bin") |"
             echo "| stripped | $(size lean-home.stripped) |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The Docker image (Dockerfile) builds and serves: not published, that comes with releases.
+  image:
+    needs: ci-changes
+    if: needs.ci-changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Build
+        run: |
+          . compat/versions.env
+          docker build --build-arg HA_FRONTEND="$HA_FRONTEND" -t lean-home:ci .
+      - name: Smoke test
+        run: |
+          # A throwaway config with HA's auth files, as the replay uses.
+          python3 compat/make-config.py "$RUNNER_TEMP/config"
+          docker run -d --name lh -p 127.0.0.1:8123:8123 -v "$RUNNER_TEMP/config:/config" lean-home:ci
+          for _ in $(seq 50); do curl -sf http://127.0.0.1:8123/manifest.json >/dev/null && break; sleep 0.2; done
+          curl -sf http://127.0.0.1:8123/manifest.json >/dev/null || { docker logs lh; exit 1; }
+          curl -sf http://127.0.0.1:8123/ | grep -q '<html' || { docker logs lh; exit 1; }
+          docker logs lh
+      - name: Image size
+        run: |
+          size=$(docker image inspect lean-home:ci --format '{{.Size}}')
+          awk -v b="$size" 'BEGIN { printf "### Image size (x86_64)\n%.1f MB (%d bytes)\n", b / 1e6, b }' | tee -a "$GITHUB_STEP_SUMMARY"

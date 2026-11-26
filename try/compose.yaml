@@ -1,0 +1,32 @@
+# Try lean-home locally: an MQTT broker, a few simulated MQTT devices, and lean-home built from this
+# checkout. Run ./setup.sh once first: it writes .env (the pinned versions) and an onboarded
+# config dir. See README.md, "Try it in Docker".
+name: lean-home-try
+
+services:
+  mosquitto:
+    image: ${MOSQUITTO_IMAGE:?run ./setup.sh first}
+    command: mosquitto -c /mosquitto-no-auth.conf # anonymous, on the compose network only
+    restart: unless-stopped
+
+  # A lights/switch/sensor/door device that announces itself with MQTT discovery and echoes
+  # commands back as its state, like a real one (devices.sh).
+  devices:
+    image: ${MOSQUITTO_IMAGE:?run ./setup.sh first}
+    entrypoint: ["sh", "/devices.sh"]
+    volumes:
+      - ./devices.sh:/devices.sh:ro
+    depends_on: [mosquitto]
+    restart: unless-stopped
+
+  lean-home:
+    build:
+      context: ..
+      args:
+        HA_FRONTEND: ${HA_FRONTEND:?run ./setup.sh first}
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./config:/config
+    depends_on: [mosquitto]
+    restart: unless-stopped

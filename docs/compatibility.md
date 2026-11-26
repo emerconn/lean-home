@@ -24,7 +24,13 @@ separately, but lean-home copies their behaviour, so check them on every upgrade
 | Python | 3.14.10 | `str()`/`repr()` of values and floats in templates; `zoneinfo`'s handling of DST gaps and overlaps |
 | PyYAML | 6.0.3 | YAML 1.1 scalar resolution (`on`, `3:00:00`, `0777`…) |
 | annotatedyaml | 1.0.2 | HA's YAML tags, `secrets.yaml` lookup, `!include_dir_*` file order |
-| tzdata | 2026.6 | Nothing at build time: lean-home reads the host's zoneinfo at run time |
+| tzdata | 2026.6 | Nothing at build time: lean-home reads the system zoneinfo at run time (the Docker image's comes from Alpine's `tzdata`) |
+
+The Docker image and `try/` use the pins too: the `Dockerfile` takes `HA_FRONTEND` as a build arg
+(CI and `try/setup.sh` pass it from `versions.env`, which `try/setup.sh` copies into `try/.env`
+with `MOSQUITTO_IMAGE`), and `try/setup.sh` onboards with `HA_IMAGE`. Its base images are pinned
+in the `Dockerfile` itself: the Rust image is `rust-toolchain.toml`'s channel (a test checks
+they agree), and the Python one HA's Python minor version (newer frontend wheels require it).
 
 Benchmark baselines are separate and pinned in `bench/` (HA 2026.1.1 and a
 `yon/homeassistant-rs` commit in `bench/setup-hars.sh`). They compare footprints; lean-home's

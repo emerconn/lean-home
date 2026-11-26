@@ -1,0 +1,6 @@
+# The image builds from the Rust sources only; everything else stays out of the build context.
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!crates/
