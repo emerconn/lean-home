@@ -468,7 +468,9 @@ fn on_state(app: &Arc<App>, change: &Change) {
                     continue;
                 }
             };
-            // HA's JSON encoder writes a timedelta this way (templates see the dict too).
+            // HA's JSON encoder writes a timedelta this way.
+            // shortcut: templates see this dict too, where HA's see a timedelta
+            // (`trigger.for.total_seconds()` fails); add a timedelta value to the template engine.
             data.insert(
                 "for".into(),
                 json!({"__type": "<class 'datetime.timedelta'>", "total_seconds": secs}),
@@ -585,6 +587,8 @@ fn on_mqtt(app: &Arc<App>, n: usize, ti: usize, msg: &crate::mqtt::Message) {
 }
 
 /// The first instant after `after` whose wall-clock time in `tz` is `at`.
+// shortcut: at a DST change, a repeated time fires at its first occurrence and a skipped one an
+// hour later (02:30 at 03:30), unchecked against HA; check with a recording across a change.
 fn next_time(tz: &crate::config::Zone, after: DateTime<Utc>, at: NaiveTime) -> DateTime<Utc> {
     let date = (after + tz.offset(after)).date_naive();
     (0..3)

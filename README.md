@@ -32,7 +32,7 @@ versions it targets (HA 2026.11.2 today) are pinned in [`compat/versions.env`](c
 Footprint, under the [measurement rules](docs/architecture.md#measurement-rules) (single runs):
 0.6 MiB anon memory idle with MQTT connected and 1.4 MiB with the frontend connected (step 1);
 0.6 MiB idle with a real config loaded (step 2.3), 0.85 MiB after 20 script runs with their
-traces stored (step 2.4, scripts), and a 7.3 MB stripped release binary with automations.
+traces stored (step 2.4, scripts), and a 7.4 MB stripped release binary with automations and the read-only editors.
 
 ```sh
 # config/ must already be onboarded by HA (lean-home has no onboarding yet); MQTT starts if HA
