@@ -89,7 +89,8 @@ What each checked item built and how it was checked: [step-2.md](step-2.md).
   ([Gaps, templates](#templates)).
 - [x] [Blueprints](step-2.md#blueprints): `use_blueprint` automations, starting with the two HA puts in every config dir
   (motion light, which needs `wait_for_trigger`; zone notification).
-- [ ] `sun` trigger and condition (sunrise and sunset checked against HA's `astral`).
+- [x] [`sun` trigger and condition](step-2.md#sun-trigger-and-condition) (sunrise and sunset checked
+  against HA's `astral`).
 
 ### Running it
 
@@ -206,12 +207,11 @@ why it can wait.
 
 - [ ] **Script actions not built yet**: `scene`, device actions, service responses (`response_variable`). A script
   using one is unavailable, with the error in the log. *When:* by demand.
-- [ ] **Conditions not built yet**: `sun`, `zone`, `device`. *When:* `sun` with step 2; the rest
-  by demand.
-- [ ] **Triggers not built yet**: `sun`, `device`…; time triggers at an `input_datetime`
+- [ ] **Conditions not built yet**: `zone`, `device`. *When:* by demand.
+- [ ] **Triggers not built yet**: `device`…; time triggers at an `input_datetime`
   or timestamp sensor or with an offset; MQTT topic templates; `trigger_variables`; HA's
   `not_triggered` traces. An automation using one is unavailable, with the error in the log.
-  *When:* step 2's trigger items. *Why:* each is small next to the engine; they share `fire()` in
+  *When:* by demand. *Why:* each is small next to the engine; they share `fire()` in
   `automation.rs`.
 - [ ] **Automation details**: an automation without an `id` stores traces under its object id (HA
   keeps none); no `automation_triggered` event or logbook entries. *When:* with the logbook.

@@ -25,11 +25,13 @@ reference), is in [docs/roadmap.md](docs/roadmap.md).
   directions.
 - [x] **1. MQTT + discovery.** HA's MQTT config entry (TCP or TLS) and registries; lights (default
   and JSON schema), switches, sensors and binary sensors, discovered per component or per device.
-- [ ] **2. Automations, scripts, templates.** Done: HA's template helpers, checked against HA's own
+- [x] **2. Automations, scripts, templates.** Done: HA's template helpers, checked against HA's own
   template tests; `configuration.yaml` with HA's tags and packages, the core config and time zone;
-  scripts and automations (state, MQTT and time triggers) with HA's run traces, on/off kept across
-  restarts; the automation and script editors (open, save, delete, with reload). Next: more
-  triggers, conditions and actions, then blueprints.
+  scripts and automations (state, MQTT, time, `numeric_state`, `time_pattern`, `homeassistant`,
+  `template`, `event`, `sun` triggers; `state`, `numeric_state`, `template`, `trigger`, `time`,
+  `sun` conditions; `repeat`, `sequence`, `parallel`, `wait_template`, `wait_for_trigger`, `event`
+  actions; blueprints) with HA's run traces, on/off kept across restarts; the automation and
+  script editors (open, save, delete, with reload).
 - [ ] **3. The house's basics:** storage dashboards, helpers, template, `command_line` and `rest`
   entities.
 - [ ] **4–9.** History, Companion apps, config flows, the Python plugin host, Matter and cameras

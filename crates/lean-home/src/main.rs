@@ -11,6 +11,7 @@ mod restore;
 mod script;
 mod services;
 mod state;
+mod sun;
 mod template;
 mod trace;
 mod ws;

@@ -236,3 +236,16 @@ commands and allowed `use_blueprint` automations in `editor::validate`. Checked 
 `blueprint.rs` (`default_blueprints_match_ha_fixture` and end-to-end
 `motion_light_blueprint_runs_end_to_end`). Binary size and memory measurements were not taken
 separately for this change.
+
+## Sun trigger and condition
+
+(Done: `sun.rs`, `automation.rs`, `condition.rs`, `script.rs`, `ws.rs`.) Added solar sunrise and
+sunset calculation in `sun.rs` matching HA's `astral` 2.2 (including elevation horizon
+adjustment, atmospheric refraction, and polar day/night handling), the `sun` trigger (`sunrise`
+and `sunset` with signed `offset`/`offset_type`, including `wait_for_trigger`) in `automation.rs`,
+and the `sun` condition (`after`/`before` with `after_offset`/`before_offset`, overnight
+`after: sunset` + `before: sunrise` OR semantics, and `wanted_time_before`/`wanted_time_after`
+traces) in `condition.rs`. Checked against real HA 2026.11.2 via
+`compat/fixtures/step2/pr5-sun.json` (`compat/record-pr5.py`) in `sun.rs`
+(`matches_ha_astral_fixture`) and `condition.rs` (`sun_conditions_match_ha_fixture`). Binary size
+and memory measurements were not taken separately for this change.

@@ -126,6 +126,17 @@ docker run --rm -i --entrypoint python3 "$HA_IMAGE" - < compat/record-pr4.py \
   > compat/fixtures/step2/pr4-blueprints.json
 ```
 
+## Step 2 sun fixture
+
+`fixtures/step2/pr5-sun.json` records HA's `astral` 2.2 sunrise/sunset times (for London and
+Austin, with positive and negative offsets) and `sun` condition evaluations across five UTC
+timestamps. `sun.rs` and `condition.rs` test against it. Regenerate with:
+
+```bash
+docker run --rm -i --entrypoint python3 "$HA_IMAGE" - < compat/record-pr5.py \
+  > compat/fixtures/step2/pr5-sun.json
+```
+
 ## Replay and compare
 
 `compat/replay.sh <scenario>` runs the same scenario against lean-home (same login, browser steps,
