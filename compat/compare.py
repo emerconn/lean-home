@@ -198,7 +198,7 @@ def compare_restore_state(rec_dir, rep_dir):
         a, b = ha[eid], lh[eid]
         if b["entity_registry_id"] is None and a["entity_registry_id"] == "<hex32>":
             # Created in the editor: HA added a registry entry, lean-home's registry is read-only
-            # (docs/architecture.md, "Deferred").
+            # (docs/roadmap.md, "Gaps").
             b = {**b, "entity_registry_id": "<hex32>"}
         check(a == b, f"restore state of {eid} differs", a, b)
 

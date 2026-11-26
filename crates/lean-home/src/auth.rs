@@ -156,7 +156,7 @@ impl Auth {
                 ))
             })
             .collect();
-        // shortcut: no onboarding yet, so a config dir onboarded by HA is required; upgrade with roadmap step 5.
+        // shortcut: no onboarding yet, so a config dir onboarded by HA is required; upgrade with roadmap step 6.
         if hashes.is_empty() {
             return Err(
                 "no users in .storage/auth_provider.homeassistant; onboard with HA first".into(),

@@ -34,6 +34,15 @@
     },
   ],
   packageRules: [
+    // The Dockerfile's base images. Rust follows rust-toolchain.toml (bumped together by hand; a
+    // test checks they agree); Python stays on HA's minor version (newer frontends need it).
+    { matchManagers: ["dockerfile"], matchDepNames: ["rust"], enabled: false },
+    {
+      matchManagers: ["dockerfile"],
+      matchDepNames: ["python"],
+      allowedVersions: "/^3\\.14\\./",
+    },
+    { matchManagers: ["dockerfile"], semanticCommitType: "chore", groupName: "docker base images" },
     { matchManagers: ["github-actions"], semanticCommitType: "ci", groupName: "github actions" },
     {
       matchManagers: ["custom.regex"],

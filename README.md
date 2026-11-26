@@ -17,12 +17,52 @@ Goals 1 and 2 are hard requirements. Goal 3 is optimized around them.
 
 ## Status
 
-| Roadmap step | Status | What works |
-|---|---|---|
-| 0. Frontend loads | Done | The official HA frontend logs in, renders the dashboard and controls entities live. Login uses the HA config dir's own `.storage/auth*`, so tokens work in both directions |
-| 1. MQTT + discovery | Done | HA's MQTT config entry (TCP or TLS) and registries; lights (default and JSON schema), switches, sensors and binary sensors, discovered per component or per device |
-| 2. Automations, scripts, templates | In progress | **Done:** HA's template helpers (`states()`, `float(0)`, `iif`…), checked against HA's own template tests, with live `render_template` and MQTT value templates; `configuration.yaml` with HA's tags (`!include`, `!secret`, `!include_dir_*`) and packages, the core config and time zone; scripts (`script.*` entities and services, modes, conditions, `choose`/`if`/`delay`…) and automations (state, MQTT and time triggers, `automation.*` entities and services, on/off kept across restarts) with HA's run traces; the automation and script editors (open, save, delete, with reload). **Next:** the HA 2026.11.3 upgrade ([what's left](docs/architecture.md#whats-left-in-step-2)) |
-| 3–8. History, `mobile_app`, config flows, Python plugins, more integrations, voice | Not started | See the [roadmap](docs/architecture.md#roadmap) |
+The full checklist, and what a real house still needs (the maintainer's Home Assistant is the
+reference), is in [docs/roadmap.md](docs/roadmap.md).
+
+- [x] **0. Frontend loads.** The official HA frontend logs in, renders the dashboard and controls
+  entities live. Login uses the HA config dir's own `.storage/auth*`, so tokens work in both
+  directions.
+- [x] **1. MQTT + discovery.** HA's MQTT config entry (TCP or TLS) and registries; lights (default
+  and JSON schema), switches, sensors and binary sensors, discovered per component or per device.
+- [ ] **2. Automations, scripts, templates.** Done: HA's template helpers, checked against HA's own
+  template tests; `configuration.yaml` with HA's tags and packages, the core config and time zone;
+  scripts and automations (state, MQTT and time triggers) with HA's run traces, on/off kept across
+  restarts; the automation and script editors (open, save, delete, with reload). Next: more
+  triggers, conditions and actions, then blueprints.
+- [ ] **3. The house's basics:** storage dashboards, helpers, template, `command_line` and `rest`
+  entities.
+- [ ] **4–9.** History, Companion apps, config flows, the Python plugin host, Matter and cameras
+  and other native integrations, voice.
+
+## Try it in Docker
+
+A broker, a simulated MQTT device (two lights, a fan, a temperature sensor, a door) and lean-home,
+in Docker Compose. Needs Docker with Compose, curl and jq:
+
+```sh
+try/setup.sh             # once: onboards try/config with stock HA (asks for a password)
+docker compose -f try/compose.yaml up -d --build
+```
+
+Open http://localhost:8123 and log in as `dev` (or the username you passed to `setup.sh`). The
+device shows up through MQTT discovery, with three example automations and a script from the
+compat scenario:
+
+- Turn the fan on: "Fan lights ceiling" turns the ceiling light on (while the door is closed).
+- Press the button, which runs `script.blink` on the desk light:
+  `docker compose -f try/compose.yaml exec mosquitto mosquitto_pub -t lh/button -m press`
+- Open the door: `docker compose -f try/compose.yaml exec mosquitto mosquitto_pub -r -t lh/door/state -m ON`
+- Edit, save and run automations and scripts in Settings, and read their traces.
+
+Not there yet: history, every integration but MQTT, translations (the UI shows raw states such as
+`on`). `try/setup.sh reset` stops it and deletes `try/config`.
+
+The image on its own: `docker build --build-arg HA_FRONTEND=<from compat/versions.env> -t
+lean-home .`, then `docker run -v /path/to/config:/config -p 8123:8123 lean-home`. The config dir
+must be one HA has onboarded (lean-home has no onboarding yet). With a copy of a real HA config
+dir, only its MQTT devices, automations and scripts come up today. Use a **copy**: lean-home
+writes to it (`.storage`, the editors' YAML files).
 
 Compatibility is checked, not assumed: CI replays sessions recorded from real HA
 (`compat/fixtures/`) against lean-home and diffs every message. The HA, frontend and Mosquitto
@@ -32,7 +72,8 @@ versions it targets (HA 2026.11.2 today) are pinned in [`compat/versions.env`](c
 Footprint, under the [measurement rules](docs/architecture.md#measurement-rules) (single runs):
 0.6 MiB anon memory idle with MQTT connected and 1.4 MiB with the frontend connected (step 1);
 0.6 MiB idle with a real config loaded (step 2.3), 0.85 MiB after 20 script runs with their
-traces stored (step 2.4, scripts), and a 7.6 MB stripped release binary with automations, the editors and packages.
+traces stored (step 2.4, scripts), and a 7.6 MB stripped release binary with automations, the editors and packages. The Docker
+image holds 186 MB, 177 MB of it the frontend (trimming it is on the roadmap).
 
 ```sh
 # config/ must already be onboarded by HA (lean-home has no onboarding yet); MQTT starts if HA
@@ -68,11 +109,15 @@ See [docs/architecture.md](docs/architecture.md).
 | Path | What |
 |---|---|
 | [crates/](crates/) | Rust workspace: the `lean-home` binary (HTTP/auth, WebSocket API, state machine) |
-| [docs/architecture.md](docs/architecture.md) | Design, stack choices, roadmap |
+| [docs/roadmap.md](docs/roadmap.md) | Roadmap, the reference house, known gaps (checklists) |
+| [docs/architecture.md](docs/architecture.md) | Design and stack choices |
+| [docs/step-2.md](docs/step-2.md) | What step 2 built and how it was checked |
+| [Dockerfile](Dockerfile), [try/](try/) | The image, and a Compose setup to try it |
 | [docs/benchmarks.md](docs/benchmarks.md) | Methodology and results |
 | [docs/landscape.md](docs/landscape.md) | Related projects (Moli OS, homeassistant-rs, HOMECORE) |
 | [docs/frontend-rendering.md](docs/frontend-rendering.md) | Would Rust/WASM speed up heavy browser views? (G-code preview measurement) |
 | [bench/](bench/) | Reproducible benchmark harness, HA patches, raw results |
+| [compat/](compat/) | Recordings of real HA, the replay against lean-home, the upstream version pins |
 | [.github/](.github/) | CI, PR title check, Renovate, release-plz |
 
 ## Contributing

@@ -69,7 +69,7 @@ pub fn settings(config_dir: &Path) -> Result<Option<Settings>, String> {
         .and_then(Value::as_str)
         .is_some_and(|t| t != "tcp")
     {
-        // shortcut: no websocket transport (rare; see docs/architecture.md, "Deferred").
+        // shortcut: no websocket transport (rare; see docs/roadmap.md, "Gaps").
         return Err("mqtt: the websockets transport is not supported yet; use tcp".into());
     }
     // As in HA, TLS is on exactly when a CA is configured.
