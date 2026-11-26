@@ -286,8 +286,8 @@ to the CI replay.
      messages as recorded). Measured on the dev PC (single run, `RssAnon` rather than
      `bench/bench.sh`'s cgroup): stripped binary +183 KiB (7.14 → 7.32 MB); idle anon memory
      +36 KiB (984 → 1020 KiB) with the scenario's 3 automations.
-   - **Next: the editors' commands.** Add the template helpers and actions automations need
-     from "Deferred" below.
+   - **Next: the editors**, read-only pages first, then saving (below). Add the template helpers
+     and actions automations need from "Deferred" below.
 
 Measure memory and binary size before and after, as for steps 0 and 1.
 
@@ -295,16 +295,23 @@ Measure memory and binary size before and after, as for steps 0 and 1.
 
 In order; each is its own PR, branched from `main` after the previous one merges.
 
-1. **The automation and script editors.** The REST and WebSocket commands the editor pages
-   send (in `compat/fixtures/automations`: `config/automation/config/<id>`,
-   `config/script/config/<key>`, `blueprint/list`, `trigger_platforms/subscribe`,
-   `condition_platforms/subscribe`, `config/entity_registry/list`, `manifest/list`,
-   `frontend/get_icons`…). `compare.py` tolerates exactly those for now (`EDITOR_COMMANDS`, and
-   it skips `/api/config/` requests): remove that when they're done. Saving writes
-   `automations.yaml`/`scripts.yaml`: the first time lean-home writes a user's config file,
-   so write atomically and keep a backup.
-2. **Packages** (`homeassistant: packages:`), so automations defined in them load.
-3. **Upgrade to HA 2026.11.3** with the checklist in [compatibility](compatibility.md): Renovate
+1. **The editors, read-only.** The REST and WebSocket commands the automation and script
+   editor pages send when opened (in `compat/fixtures/automations`:
+   `GET /api/config/automation/config/<id>`, `GET /api/config/script/config/<key>`,
+   `blueprint/list`, `trigger_platforms/subscribe`, `condition_platforms/subscribe`,
+   `config/entity_registry/list`, `config/category_registry/list`, `config_entries/subscribe`,
+   `manifest/list`, `frontend/get_icons`). `compare.py` tolerates exactly those for now
+   (`EDITOR_COMMANDS`, and it skips `/api/config/` requests): done when that is removed and the
+   scenario still matches.
+2. **The editors, saving.** Record first: add a save from the automation editor (and one from
+   the script editor) to `automations_steps` and re-record with `compat/capture-mqtt.sh
+   automations`. Then `POST /api/config/automation/config/<id>` and
+   `/api/config/script/config/<key>` (and `DELETE`): write `automations.yaml`/`scripts.yaml`,
+   the first time lean-home writes a user's config file, so write atomically (temp file and
+   rename) and keep a backup; then reload that one automation or script, as HA's save does
+   (`automation.reload` with `id`, `script.reload`), so the change runs without a restart.
+3. **Packages** (`homeassistant: packages:`), so automations defined in them load.
+4. **Upgrade to HA 2026.11.3** with the checklist in [compatibility](compatibility.md): Renovate
    opens that PR on its Monday run and it stays red until the fixtures are re-recorded.
 
 Also open, not step 2: release-plz's PR #9 (`chore: release v0.0.0`) is waiting for a
@@ -344,8 +351,8 @@ Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the
 | Script actions not built yet: `wait_template`, `wait_for_trigger`, `repeat`, `parallel`, `sequence`, `event`, `scene`, device actions, service responses (`response_variable`). A script using one is unavailable, with the error in the log | By what configs use (`wait_for_trigger` can reuse `automation.rs`'s triggers) | `wait_*` need the trigger and template listeners; the others are each small |
 | Conditions not built yet: `time`, `sun`, `zone`, `device` | By demand | Each is small; `sun` needs the location's sun times |
 | Triggers not built yet: `event`, `numeric_state`, `template`, `homeassistant`, `sun`, `time_pattern`, `device`…; time triggers at an `input_datetime`/timestamp sensor or with an offset; MQTT topic templates; `trigger_variables`; HA's `not_triggered` traces. An automation using one is unavailable, with the error in the log | By what configs use; `numeric_state`, `time_pattern` and `homeassistant` (start) are the common ones | Each is small next to the engine; they share `fire()` in `automation.rs` |
-| Automation details: `automation.reload` (restart instead), on/off and `last_triggered` aren't kept across restarts (HA's `core.restore_state`), an automation without an `id` stores traces under its object id (HA keeps none), the `automation_triggered` event and logbook entries | Restore with the recorder step, reload with config reloading, the rest with the logbook | Running, triggering and tracing are right; these are the edges |
-| Script details: `script.reload` (restart instead), `last_triggered` and traces aren't kept across restarts (HA's `core.restore_state`, `trace.saved_traces`), field defaults and non-entity selector defaults in `get_services`, branch-local variables (HA lets a branch update an outer variable), `continue_on_error` skipping every error (HA stops on configuration errors) | Restore with the recorder step; reload with config reloading; the rest when a config needs it | Running and tracing are right; these are the edges |
+| Automation details: `automation.reload` (restart instead), on/off and `last_triggered` aren't kept across restarts (HA's `core.restore_state`), an automation without an `id` stores traces under its object id (HA keeps none), the `automation_triggered` event and logbook entries | Restore with the recorder step, reload with editor saving, the rest with the logbook | Running, triggering and tracing are right; these are the edges |
+| Script details: `script.reload` (restart instead), `last_triggered` and traces aren't kept across restarts (HA's `core.restore_state`, `trace.saved_traces`), field defaults and non-entity selector defaults in `get_services`, branch-local variables (HA lets a branch update an outer variable), `continue_on_error` skipping every error (HA stops on configuration errors) | Restore with the recorder step; reload with editor saving; the rest when a config needs it | Running and tracing are right; these are the edges |
 | Template re-render rate limits after an error (HA waits up to 60 s before re-rendering a failed template) | With the rate limit row below | lean-home retries on the next matching change |
 | `render_template` has no rate limit (HA: 1/s for domain listeners, 1/min for all states) | If a dashboard iterating all states proves costly | Re-rendering on every change is correct, only more work |
 | Registries are read-only: new MQTT entities aren't written to `core.entity_registry` (HA later picks the same ids, normally) | Step 5 | Needed once lean-home renames entities or assigns areas itself, i.e. with config flows; writing HA's file needs care not to corrupt it |
