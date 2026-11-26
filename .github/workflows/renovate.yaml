@@ -15,15 +15,15 @@ jobs:
   renovate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       # App token, not GITHUB_TOKEN, so Renovate's PRs trigger CI
       - id: token
-        uses: actions/create-github-app-token@v3.4.0
+        uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.BOT_CLIENT_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
       # self-hosted Renovate CLI
-      - uses: renovatebot/github-action@v46.3.14
+      - uses: renovatebot/github-action@v46
         with:
           token: ${{ steps.token.outputs.token }}
         env:

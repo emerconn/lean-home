@@ -23,7 +23,7 @@ jobs:
     outputs:
       code: ${{ steps.diff.outputs.code }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # Docs and agent/IDE config changes can't affect the build or the replay. A failing git diff fails the job (bash -e).
@@ -41,15 +41,15 @@ jobs:
     env:
       FRONTEND: ${{ github.workspace }}/bench/.work/venv/lib/python3/site-packages/hass_frontend
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       # rustup reads rust-toolchain.toml on first cargo call, no setup action needed
       # key: replay.sh builds debug; the key doesn't include the profile, so an older release cache under the
       # same key would be restored and never replaced.
-      - uses: Swatinem/rust-cache@v2.9.3
+      - uses: Swatinem/rust-cache@v2
         with:
           key: debug
       # Downloads only (the frontend wheel, puppeteer-core); the installs still run, from this cache.
-      - uses: actions/cache@v6.1.0
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cache/pip
@@ -74,7 +74,7 @@ jobs:
       - run: compat/compare.py automations compat/fixtures/automations bench/.work/replay/automations
       # On failure: lean-home's server.log, the browser's failure.log and failure.png, what was recorded so far.
       - if: failure()
-        uses: actions/upload-artifact@v7.0.2
+        uses: actions/upload-artifact@v7
         with:
           name: compat-replay
           path: bench/.work/replay/
