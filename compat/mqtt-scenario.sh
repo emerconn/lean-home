@@ -62,6 +62,8 @@ mqtt_jsonl() { jq -cR 'split("\t") | {topic: .[2], payload: (.[3:] | join("\t"))
 # a live template, failing ones (errors with and without report_errors, strict mode) and one that renders with
 # an undefined variable, automations firing from state and MQTT triggers, a script with delay and
 # choose, then the frontend's automation, trace and script pages (with the script's traces).
+# The sleep lets the script the button starts finish its 1 s delay before the fan turns off, as it
+# did in the recording: the quiet window (capture.mjs) is shorter than the delay.
 automations_steps() {
   local T="{{ states('sensor.demo_device_temperature') }}|{{ is_state('binary_sensor.demo_device_front_door', 'on') }}|{{ state_attr('light.demo_device_ceiling', 'brightness') }}|{{ states('sensor.missing') | float(0) }}|{{ iif(is_state('switch.demo_device_fan', 'on'), 'fan', 'still') }}"
   cat <<EOF
@@ -73,6 +75,7 @@ automations_steps() {
  {"sub": {"type": "render_template", "template": "{{ nope }} x", "report_errors": true}},
  {"call": ["switch", "turn_on", {"entity_id": "switch.demo_device_fan"}]},
  {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -t lh/button -m press"},
+ {"sh": "sleep 2"},
  {"call": ["switch", "turn_off", {"entity_id": "switch.demo_device_fan"}]},
  {"sh": "docker exec $MQ mosquitto_pub -i lh-pub -r -t lh/door/state -m ON"},
  {"call": ["automation", "trigger", {"entity_id": "automation.fan_lights_ceiling", "skip_condition": false}]},

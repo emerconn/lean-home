@@ -1,4 +1,5 @@
 mod auth;
+mod automation;
 mod condition;
 mod config;
 mod http;
@@ -32,6 +33,9 @@ pub struct App {
     pub mqtt: OnceLock<Arc<mqtt::Mqtt>>,
     pub config: config::Config,
     pub scripts: script::Scripts,
+    pub automations: automation::Automations,
+    /// Script and automation run traces.
+    pub traces: trace::Traces,
 }
 
 impl App {
@@ -46,6 +50,7 @@ impl App {
         let registry = registry::Registry::load(config_dir)?;
         let states: Arc<state::States> = Arc::default();
         let scripts = script::Scripts::load(&config.scripts, &registry, &states);
+        let automations = automation::Automations::load(&config.automations, &registry, &states);
         let app = Self {
             config,
             auth: auth::Auth::load(config_dir)?,
@@ -55,6 +60,8 @@ impl App {
             registry,
             mqtt: OnceLock::new(),
             scripts,
+            automations,
+            traces: trace::Traces::default(),
         };
         if demo {
             services::load_demo(&app.states);
@@ -75,6 +82,8 @@ impl App {
             "switch",
             "sensor",
             "persistent_notification",
+            "script",
+            "automation",
         ];
         if self.mqtt.get().is_some() {
             c.extend(["mqtt", "binary_sensor"]);
@@ -154,6 +163,7 @@ fn main() {
         if let Some(settings) = mqtt {
             let _ = app.mqtt.set(mqtt::Mqtt::start(app.clone(), settings));
         }
+        automation::start(&app);
         let listener = tokio::net::TcpListener::bind(listen)
             .await
             .unwrap_or_else(|e| exit(&format!("{listen}: {e}")));

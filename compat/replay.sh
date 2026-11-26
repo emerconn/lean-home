@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Replay a recorded scenario against lean-home, the way it was recorded against HA, into
 # bench/.work/replay/<scenario>/; compat/compare.py then diffs it with the recording.
-#   usage: compat/replay.sh frontend-load|mqtt-discovery
+#   usage: compat/replay.sh frontend-load|mqtt-discovery|automations
 # Needs cargo, python3, node with puppeteer-core in bench/.work/node, a Chromium ($CHROMIUM,
-# default /usr/bin/chromium), the hass_frontend dir ($FRONTEND), and for mqtt-discovery docker + jq.
+# default /usr/bin/chromium), the hass_frontend dir ($FRONTEND), and for the MQTT scenarios docker + jq.
 set -euo pipefail
-ROOT=$(cd "$(dirname "$0")/.." && pwd); . "$ROOT/compat/versions.env"; SCENARIO=${1:?usage: replay.sh frontend-load|mqtt-discovery}
+ROOT=$(cd "$(dirname "$0")/.." && pwd); . "$ROOT/compat/versions.env"; SCENARIO=${1:?usage: replay.sh frontend-load|mqtt-discovery|automations}
 OUT=$ROOT/bench/.work/replay/$SCENARIO; FIXTURES=$ROOT/compat/fixtures/$SCENARIO
 FRONTEND=${FRONTEND:-$ROOT/bench/.work/hass_frontend}; export CHROMIUM=${CHROMIUM:-/usr/bin/chromium}
 PORT=${PORT:-18200}; URL=http://127.0.0.1:$PORT
@@ -27,7 +27,7 @@ case $SCENARIO in
     python3 "$ROOT/compat/make-config.py" "$OUT/config"
     args=(--demo) # the recording toggles light.kitchen, which the demo provides
     ;;
-  mqtt-discovery)
+  mqtt-discovery|automations)
     . "$ROOT/compat/mqtt-scenario.sh"
     # log_type subscribe: the waits below read subscriptions from the broker log instead of sleeping.
     printf 'listener 1883\nallow_anonymous true\nlog_type error\nlog_type warning\nlog_type notice\nlog_type information\nlog_type subscribe\n' > "$OUT/mosquitto.conf"
@@ -42,7 +42,15 @@ case $SCENARIO in
     wait_for subscribed 'lh-responder 0 lh/+/brightness/set'
     mqtt_devices
     python3 "$ROOT/compat/make-config.py" "$OUT/config" "$FIXTURES" 127.0.0.1 "$MQTT_PORT"
-    STEPS=$(mqtt_steps)
+    if [ "$SCENARIO" = automations ]; then
+      cp "$ROOT"/compat/automations/*.yaml "$OUT/config/"
+      # The nightly automation fires at 03:00, which the recording never reached. Near 03:00 UTC,
+      # replay in a zone where it's afternoon (UTC-12) so it doesn't fire mid-scenario.
+      case $(date -u +%H) in 02|03) printf 'homeassistant:\n  time_zone: Etc/GMT+12\n' >> "$OUT/config/configuration.yaml" ;; esac
+      STEPS=$(automations_steps)
+    else
+      STEPS=$(mqtt_steps)
+    fi
     ;;
   *) echo "unknown scenario $SCENARIO" >&2; exit 2 ;;
 esac
@@ -54,7 +62,7 @@ curl -sf "$URL/manifest.json" >/dev/null || { echo "lean-home did not start:" >&
 STEPS=${STEPS:-} NODE_PATH=$ROOT/bench/.work/node/node_modules node "$ROOT/compat/capture.mjs" "$URL" "$OUT"
 # A clean stop, so the will message HA sends on shutdown is part of what's compared.
 kill -TERM "$LH"; wait "$LH"
-if [ "$SCENARIO" = mqtt-discovery ]; then
+if [ "$SCENARIO" != frontend-load ]; then
   # The last message: the will lean-home sends on shutdown, as HA does.
   wait_for grep -qP '\thomeassistant/status\toffline$' "$MQTT_LOG"
   mqtt_jsonl < "$OUT/mqtt.tsv" > "$OUT/mqtt.raw.jsonl"

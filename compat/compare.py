@@ -19,6 +19,15 @@ ALLOWED_ERRORS = {
     ("recorder/info", "unknown_command"),
     ("lovelace/config", "config_not_found"),  # HA answers the same: no dashboard saved yet
 }
+# What the automation and script editor pages (the automations scenario's last steps) ask for:
+# the next part of roadmap step 2. Until then the frontend reports these errors through system_log.write, and the
+# editors' config requests (/api/config/automation/config/<id>…) aren't compared.
+EDITOR_COMMANDS = {
+    "blueprint/list", "condition_platforms/subscribe", "config/category_registry/list",
+    "config/entity_registry/list", "config_entries/subscribe", "frontend/get_icons", "manifest/list",
+    "trigger_platforms/subscribe",
+}
+EDITOR_ERRORS = {(c, "unknown_command") for c in EDITOR_COMMANDS}
 
 
 def expected_entities(scenario, recv):
@@ -28,8 +37,10 @@ def expected_entities(scenario, recv):
         # HA's: switch.fan isn't in the recording, and HA's template sensor.temperature has no
         # state_class while the demo's has.
         return {"light.kitchen"}
-    # Every MQTT entity HA created from the recorded discovery messages.
-    return {e["ei"] for e in (first_result(recv, "config/entity_registry/list_for_display") or {}).get("entities", []) if e["pl"] == "mqtt"}
+    # Every MQTT entity HA created from the recorded discovery messages, and with automations the
+    # automation and script entities.
+    platforms = {"mqtt", "automation", "script"} if scenario == "automations" else {"mqtt"}
+    return {e["ei"] for e in (first_result(recv, "config/entity_registry/list_for_display") or {}).get("entities", []) if e["pl"] in platforms}
 
 
 problems = []
@@ -123,16 +134,22 @@ def compare_ws(scenario, rec_dir, rep_dir):
     check(calls(rec_sent, rec) == calls(rep_sent, rep), "call_service results differ", calls(rec_sent, rec), calls(rep_sent, rep))
     # The frontend reports its own errors through system_log.write.
     logged = [m["service_data"].get("message", "")[:300] for m in rep_sent.values() if m.get("type") == "call_service" and m.get("domain") == "system_log"]
+    if scenario == "automations":
+        logged = [l for l in logged if '"code": "unknown_command"' not in l]
     check(not logged, "the frontend reported errors (system_log.write)", None, logged)
 
+    allowed = ALLOWED_ERRORS | (EDITOR_ERRORS if scenario == "automations" else set())
     errors = {(t, m["error"]["code"]) for t, m in rep if m["type"] == "result" and m.get("success") is False}
-    check(errors <= ALLOWED_ERRORS, "lean-home returned unexpected errors", None, sorted(errors - ALLOWED_ERRORS))
+    check(errors <= allowed, "lean-home returned unexpected errors", None, sorted(errors - allowed))
 
 
 def compare_http(rec_dir, rep_dir):
     # capture.mjs logs responses as they complete; requests in flight together (the page and the
     # frontend's /.well-known fetch) finish in either order, so compare in path order.
-    load = lambda d: sorted((json.loads(l) for l in (d / "http.jsonl").read_text().splitlines()), key=lambda r: (r["path"], r["method"]))
+    load = lambda d: sorted(
+        (r for r in map(json.loads, (d / "http.jsonl").read_text().splitlines()) if not r["path"].startswith("/api/config/")),
+        key=lambda r: (r["path"], r["method"]),
+    )
     rec, rep = load(rec_dir), load(rep_dir)
     compared["HTTP requests"] = len(rec)
     for a, b in zip(rec, rep):
@@ -170,7 +187,7 @@ def main():
     compare_ws(scenario, rec_dir, rep_dir)
     if scenario == "frontend-load":
         check((rec_dir / "index.html").read_text() == (rep_dir / "index.html").read_text(), "index.html differs")
-    if scenario == "mqtt-discovery":
+    if scenario != "frontend-load":
         compare_mqtt(rec_dir, rep_dir)
     if problems:
         print(f"{scenario}: {len(problems)} difference(s) from the HA recording:")

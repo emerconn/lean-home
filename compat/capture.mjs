@@ -60,7 +60,17 @@ cdp.on("Network.webSocketFrameSent", (e) => { last = Date.now(); ws.push({ dir: 
 cdp.on("Network.webSocketFrameReceived", (e) => { last = Date.now(); ws.push({ dir: "recv", msg: parse(e.response.payloadData) }); });
 
 try {
-  await page.goto(url + "/", { waitUntil: "networkidle2" });
+  // Chromium aborts loads with ERR_NETWORK_CHANGED when an interface changes, e.g. the broker
+  // container's veth still coming up; then the login form never appears. Load it once more, with
+  // the recording restarted so no request is counted twice.
+  for (let attempt = 1; ; attempt++) {
+    await page.goto(url + "/", { waitUntil: "networkidle2" });
+    const form = await page.waitForSelector("pierce/input[name=username]", { timeout: 15000 }).catch(() => null);
+    if (form || attempt === 2) break;
+    diag.push("login form missing, reloading");
+    http.length = 0;
+    ws.length = 0;
+  }
   await page.locator("pierce/input[name=username]").fill("dev");
   await page.locator("pierce/input[name=password]").fill("dev");
   await page.keyboard.press("Enter");

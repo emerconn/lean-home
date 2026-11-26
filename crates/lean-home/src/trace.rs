@@ -57,6 +57,9 @@ pub struct Trace {
     finish: Option<DateTime<Utc>>,
     script_execution: Option<String>,
     error: Option<String>,
+    /// An automation's trigger description (`None` inside for a run without one); scripts have
+    /// no `trigger` key.
+    trigger: Option<Option<String>>,
     elements: IndexMap<String, Vec<Element>>,
 }
 
@@ -76,6 +79,9 @@ impl Trace {
         .map(|mut m| {
             if let Some(e) = &self.error {
                 m.insert("error".into(), e.clone().into());
+            }
+            if let Some(t) = &self.trigger {
+                m.insert("trigger".into(), t.clone().into());
             }
             m.into()
         })
@@ -167,6 +173,11 @@ impl Recorder {
         });
     }
 
+    /// An automation run's trigger description, shown as `trigger` in `trace/list`.
+    pub fn set_trigger(&self, description: Option<String>) {
+        self.trace.lock().unwrap().trigger = Some(description);
+    }
+
     pub fn run_id(&self) -> String {
         self.trace.lock().unwrap().run_id.clone()
     }
@@ -183,7 +194,7 @@ impl Recorder {
 /// One item's stored runs, oldest first.
 type Runs = VecDeque<Arc<Mutex<Trace>>>;
 
-/// The stored traces of every script (and, with step 2.4, automation), newest last.
+/// The stored traces of every script and automation, newest last.
 #[derive(Default)]
 pub struct Traces {
     items: Mutex<IndexMap<(String, String), Runs>>,
@@ -210,6 +221,7 @@ impl Traces {
             finish: None,
             script_execution: None,
             error: None,
+            trigger: None,
             elements: IndexMap::new(),
         }));
         let mut items = self.items.lock().unwrap();

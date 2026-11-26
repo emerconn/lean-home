@@ -38,7 +38,7 @@ fn light_attrs(state: &str) -> Map<String, Value> {
     )
 }
 
-/// `get_services`: `{domain: {service: description}}`, with the scripts' services.
+/// `get_services`: `{domain: {service: description}}`, with the scripts' and automations'.
 pub fn describe(app: &App) -> Value {
     let mut out = Map::new();
     for domain in TOGGLEABLE.iter().chain(&["homeassistant"]) {
@@ -54,13 +54,26 @@ pub fn describe(app: &App) -> Value {
         out.insert(domain.to_string(), services.into());
     }
     out.insert("script".into(), app.scripts.describe());
+    let target = json!({"entity": [{"domain": ["automation"]}]});
+    let flag = |name: &str| json!({name: {"default": true, "selector": {"boolean": {}}}});
+    out.insert(
+        "automation".into(),
+        json!({
+            "trigger": {"fields": flag("skip_condition"), "target": target},
+            "toggle": {"fields": {}, "target": target},
+            "turn_on": {"fields": {}, "target": target},
+            "turn_off": {"fields": flag("stop_actions"), "target": target},
+            "reload": {"fields": {}},
+        }),
+    );
     out.into()
 }
 
-/// What a service call started, for the caller's trace: a script run as (item id, run id).
+/// What a service call started, for the caller's trace: a script or automation run as
+/// (domain, item id, run id).
 #[derive(Debug, Default)]
 pub struct Outcome {
-    pub child_run: Option<(String, String)>,
+    pub child_run: Option<(&'static str, String, String)>,
 }
 
 /// Any service call, from the WebSocket or a script step. `stack` is the chain of scripts this
@@ -74,8 +87,14 @@ pub async fn dispatch(
     ctx: Context,
     stack: Vec<String>,
 ) -> Result<Outcome, (&'static str, String)> {
-    if domain == "script" {
-        return crate::script::call_service(app, service, data, target, ctx, stack).await;
+    match domain {
+        "script" => {
+            return crate::script::call_service(app, service, data, target, ctx, stack).await;
+        }
+        "automation" => {
+            return crate::automation::call_service(app, service, data, target, ctx).await;
+        }
+        _ => {}
     }
     call_sync(app, domain, service, &data, &target, ctx).map(|_| Outcome::default())
 }

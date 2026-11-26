@@ -268,9 +268,26 @@ to the CI replay.
      changes, `trace/get` and `trace/list` exactly. Measured (`bench/bench.sh`): anon memory
      idle unchanged at 0.6 MiB; 0.85 MiB after 20 runs with 5 traces stored and a WebSocket
      session open; stripped binary +334 KiB (6.79 → 7.14 MB).
-   - **Next: triggers and automations** (state, time, MQTT; the `automation.*` entities and
-     services, automation traces), then the editor's commands. Add the template helpers and
-     actions automations need from "Deferred" below.
+   - **Triggers and automations.** (Done: `automation.rs`.) State triggers (`from`/`to`,
+     `not_from`/`not_to`, `attribute`, `for:` with templates), MQTT triggers (`payload`,
+     `value_template`, `qos`; the topic is subscribed with the hub's own), time triggers at fixed
+     times with `weekday` (re-checked against the wall clock every minute, so a board that boots
+     in 1970 and then gets NTP doesn't fire at the wrong time), trigger `id`/`alias`/`enabled`/
+     `variables`; the `trigger` condition and the `state` condition's `for:`. An automation's
+     entity is a `ScriptEntity` in the `automation` domain (`id`, `last_triggered`, `mode`,
+     `current`, `max`; `initial_state`; unavailable for a config it can't run) and its actions
+     run in `script.rs` with a context whose `parent_id` is the trigger's. Runs are traced HA's
+     way (`trigger/<idx>` with the trigger variables, `condition/<i>`, `action/…`,
+     `failed_conditions`, the trigger description in `trace/list`). Services `turn_on`,
+     `turn_off` (`stop_actions`), `toggle` and `trigger` (`skip_condition`, `variables`; answered
+     when the run ends). Checked against the recording: the fan automation's state changes,
+     `trace/list` and `trace/get` exactly, the button's and the nightly one's (03:00 on a paused
+     clock), and the `automations` scenario joined the CI replay (21 state changes, 10 MQTT
+     messages as recorded). Measured on the dev PC (single run, `RssAnon` rather than
+     `bench/bench.sh`'s cgroup): stripped binary +183 KiB (7.14 → 7.32 MB); idle anon memory
+     +36 KiB (984 → 1020 KiB) with the scenario's 3 automations.
+   - **Next: the editors' commands.** Add the template helpers and actions automations need
+     from "Deferred" below.
 
 Measure memory and binary size before and after, as for steps 0 and 1.
 
@@ -278,25 +295,16 @@ Measure memory and binary size before and after, as for steps 0 and 1.
 
 In order; each is its own PR, branched from `main` after the previous one merges.
 
-1. **Triggers and automations.** State triggers (`to`/`from`/`attribute`, and `for:`, which
-   also unlocks the `state` condition's `for:`), MQTT triggers, time triggers (tested with
-   a paused clock: the recording's 03:00 trigger never fires); the `trigger` condition; the
-   `automation.*` entities (`id`, `last_triggered`, `mode`, `current`) and services
-   (`turn_on`/`turn_off`/`toggle`, `trigger` with `skip_condition`); automation runs
-   reuse `script.rs` (actions are a script sequence) with a new context whose `parent_id` is
-   the trigger's, and are traced with `trigger/0` and `condition/0` elements and
-   `failed_conditions` (the recording's `trace/list` and `trace/get` for automation
-   `1700000000001` are the reference). Done when the `automations` scenario's state changes
-   and MQTT messages come out as recorded, so the scenario can join the CI replay
-   (`compat/replay.sh`, `compat/compare.py`, `.github/workflows/compat.yaml`; `compare.py` needs
-   `render_template`'s `listeners.entities` compared unordered).
-2. **The automation and script editors.** The REST and WebSocket commands the editor pages
+1. **The automation and script editors.** The REST and WebSocket commands the editor pages
    send (in `compat/fixtures/automations`: `config/automation/config/<id>`,
-   `config/script/config/<key>`, `search/related`, `trace/contexts`…). Saving writes
+   `config/script/config/<key>`, `blueprint/list`, `trigger_platforms/subscribe`,
+   `condition_platforms/subscribe`, `config/entity_registry/list`, `manifest/list`,
+   `frontend/get_icons`…). `compare.py` tolerates exactly those for now (`EDITOR_COMMANDS`, and
+   it skips `/api/config/` requests): remove that when they're done. Saving writes
    `automations.yaml`/`scripts.yaml`: the first time lean-home writes a user's config file,
    so write atomically and keep a backup.
-3. **Packages** (`homeassistant: packages:`), so automations defined in them load.
-4. **Upgrade to HA 2026.11.3** with the checklist in [compatibility](compatibility.md): Renovate
+2. **Packages** (`homeassistant: packages:`), so automations defined in them load.
+3. **Upgrade to HA 2026.11.3** with the checklist in [compatibility](compatibility.md): Renovate
    opens that PR on its Monday run and it stays red until the fixtures are re-recorded.
 
 Also open, not step 2: release-plz's PR #9 (`chore: release v0.0.0`) is waiting for a
@@ -331,17 +339,19 @@ Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the
 
 | Gap | Do it | Why then |
 |---|---|---|
-| HA template helpers not built yet, by HA test cases that need them (`ha_template_cases` prints the full list): datetime (`strptime` 26, `timedelta`/`as_timedelta`/`timedelta_string` 30, `relative_time`/`time_since`/`time_until` 30, `today_at`, `as_local`, `timestamp_*`), math (`average`, `median`, `statistical_mode`, `log`, trig, bitwise, `clamp`, `min`/`max` as globals), state (`expand` 12, `closest`/`distance` 23, `state_translated`/`state_attr_translated` 16, `integration_entities`), regex (24), collections (`flatten`, `combine`, `union`/`intersect`/`difference`…), areas/devices/floors/labels (~70), strings (`slugify`, `ordinal`, `wrap`), `typeof`, hashes, base64, `version`, issues | With 2.4, by what automations use; regenerate the count with the corpus | Each is small and has HA's cases waiting in the corpus: add it to `IMPLEMENTED` in `template_ha_cases.rs` and the cases start being compared |
+| HA template helpers not built yet, by HA test cases that need them (`ha_template_cases` prints the full list): datetime (`strptime` 26, `timedelta`/`as_timedelta`/`timedelta_string` 30, `relative_time`/`time_since`/`time_until` 30, `today_at`, `as_local`, `timestamp_*`), math (`average`, `median`, `statistical_mode`, `log`, trig, bitwise, `clamp`, `min`/`max` as globals), state (`expand` 12, `closest`/`distance` 23, `state_translated`/`state_attr_translated` 16, `integration_entities`), regex (24), collections (`flatten`, `combine`, `union`/`intersect`/`difference`…), areas/devices/floors/labels (~70), strings (`slugify`, `ordinal`, `wrap`), `typeof`, hashes, base64, `version`, issues | By what automations use; regenerate the count with the corpus | Each is small and has HA's cases waiting in the corpus: add it to `IMPLEMENTED` in `template_ha_cases.rs` and the cases start being compared |
 | Undefined-variable warnings name the first undefined variable only, and none for a missing attribute of a defined variable or an `if`/`for` over an undefined (HA warns there too) | When the template editor shows a wrong warning | Errors and results are right; only the `report_errors` log text can differ |
-| Script actions not built yet: `wait_template`, `wait_for_trigger`, `repeat`, `parallel`, `sequence`, `event`, `scene`, device actions, service responses (`response_variable`). A script using one is unavailable, with the error in the log | `wait_for_trigger` with triggers (2.4); the rest by what configs use | `wait_*` need the trigger and template listeners; the others are each small |
-| Conditions not built yet: `time`, `sun`, `zone`, `device`, `trigger`, and `for:` on `state` | `trigger` and `for:` with automations (2.4); the rest by demand | `trigger` needs the automation's trigger data, `for:` the clock |
+| Script actions not built yet: `wait_template`, `wait_for_trigger`, `repeat`, `parallel`, `sequence`, `event`, `scene`, device actions, service responses (`response_variable`). A script using one is unavailable, with the error in the log | By what configs use (`wait_for_trigger` can reuse `automation.rs`'s triggers) | `wait_*` need the trigger and template listeners; the others are each small |
+| Conditions not built yet: `time`, `sun`, `zone`, `device` | By demand | Each is small; `sun` needs the location's sun times |
+| Triggers not built yet: `event`, `numeric_state`, `template`, `homeassistant`, `sun`, `time_pattern`, `device`…; time triggers at an `input_datetime`/timestamp sensor or with an offset; MQTT topic templates; `trigger_variables`; HA's `not_triggered` traces. An automation using one is unavailable, with the error in the log | By what configs use; `numeric_state`, `time_pattern` and `homeassistant` (start) are the common ones | Each is small next to the engine; they share `fire()` in `automation.rs` |
+| Automation details: `automation.reload` (restart instead), on/off and `last_triggered` aren't kept across restarts (HA's `core.restore_state`), an automation without an `id` stores traces under its object id (HA keeps none), the `automation_triggered` event and logbook entries | Restore with the recorder step, reload with config reloading, the rest with the logbook | Running, triggering and tracing are right; these are the edges |
 | Script details: `script.reload` (restart instead), `last_triggered` and traces aren't kept across restarts (HA's `core.restore_state`, `trace.saved_traces`), field defaults and non-entity selector defaults in `get_services`, branch-local variables (HA lets a branch update an outer variable), `continue_on_error` skipping every error (HA stops on configuration errors) | Restore with the recorder step; reload with config reloading; the rest when a config needs it | Running and tracing are right; these are the edges |
 | Template re-render rate limits after an error (HA waits up to 60 s before re-rendering a failed template) | With the rate limit row below | lean-home retries on the next matching change |
 | `render_template` has no rate limit (HA: 1/s for domain listeners, 1/min for all states) | If a dashboard iterating all states proves costly | Re-rendering on every change is correct, only more work |
 | Registries are read-only: new MQTT entities aren't written to `core.entity_registry` (HA later picks the same ids, normally) | Step 5 | Needed once lean-home renames entities or assigns areas itself, i.e. with config flows; writing HA's file needs care not to corrupt it |
 | HA's opt-in IP ban (`http: login_attempts_threshold`, `ip_bans.yaml`) | Now unblocked (2.3 parses `configuration.yaml`); when a user asks | Off by default in HA too; lean-home already serializes password checks and backs off per IP |
-| Packages (`homeassistant: packages:`): merged into the config by HA; lean-home warns and ignores them, so automations in packages are missing | Before automations ship to users (with or right after 2.4) | Power users' configs use them; HA's merge rules per domain need care |
-| Blueprints: `!input` loads as a `{"!input": name}` marker, `use_blueprint` automations aren't expanded | With 2.4 or after, by demand | Blueprint automations are common, but need the automation engine first |
+| Packages (`homeassistant: packages:`): merged into the config by HA; lean-home warns and ignores them, so automations in packages are missing | Next in step 2, after the editors | Power users' configs use them; HA's merge rules per domain need care |
+| Blueprints: `!input` loads as a `{"!input": name}` marker, `use_blueprint` automations aren't expanded | By demand, now that automations run | Blueprint automations are common, but need the automation engine first |
 | YAML corner cases: non-string keys become Python's `str()` of them (`1:` → `"1"`), `.inf`/`.nan` become strings, dates become strings rather than date objects | When a config needs them | JSON has no such keys or numbers; HA configs quote dates where they matter |
 | `homeassistant:` keys beyond location and units (`customize`, `allowlist_external_dirs`, `media_dirs`, `auth_providers`…) | With the features that use them | Nothing reads them yet |
 | MQTT websocket transport | When a user needs it | Rare; brokers behind a reverse proxy |
