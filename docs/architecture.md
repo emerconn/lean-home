@@ -329,6 +329,19 @@ to the CI replay.
      load and reload like any other; the editors don't change them (HA's only edit
      `automations.yaml`/`scripts.yaml`). Measured like for like against `main` (release, stripped):
      7.55 → 7.48 MB, the compiler laying code out differently rather than a saving.
+   - **Restore state.** (Done: `restore.rs`; not in the plan above, picked from "Deferred",
+     where it was wrongly tied to the recorder: HA keeps it in `.storage/core.restore_state`, not
+     the database.) A restart used to turn every automation back on; now an automation keeps
+     on/off and `last_triggered`, and a script `last_triggered` (`initial_state` still wins), read
+     from HA's file at startup. lean-home writes the file as HA does: at startup, every 15
+     minutes and at shutdown, with its automations and scripts as current entries; entries for
+     entities this run doesn't have (HA's other integrations, entities removed by a reload or
+     the editor) are kept for 7 days, so a config dir shared with HA loses nothing. Recorded
+     first: HA's file after the `automations` scenario
+     (`compat/fixtures/automations/core.restore_state.json`, now captured with the other
+     `.storage` files); lean-home restores from it, and after the replay its own file has the
+     same automation and script entries, the two the editors deleted included (`compare.py`).
+     Measured (release, stripped): 7.48 → 7.58 MB.
    - **Next: the HA 2026.11.3 upgrade** (below). Add the template helpers and actions
      automations need from "Deferred" below.
 
@@ -378,8 +391,9 @@ Known gaps we chose not to close yet. Each also has a `shortcut:` comment at the
 | Script actions not built yet: `wait_template`, `wait_for_trigger`, `repeat`, `parallel`, `sequence`, `event`, `scene`, device actions, service responses (`response_variable`). A script using one is unavailable, with the error in the log | By what configs use (`wait_for_trigger` can reuse `automation.rs`'s triggers) | `wait_*` need the trigger and template listeners; the others are each small |
 | Conditions not built yet: `time`, `sun`, `zone`, `device` | By demand | Each is small; `sun` needs the location's sun times |
 | Triggers not built yet: `event`, `numeric_state`, `template`, `homeassistant`, `sun`, `time_pattern`, `device`…; time triggers at an `input_datetime`/timestamp sensor or with an offset; MQTT topic templates; `trigger_variables`; HA's `not_triggered` traces. An automation using one is unavailable, with the error in the log | By what configs use; `numeric_state`, `time_pattern` and `homeassistant` (start) are the common ones | Each is small next to the engine; they share `fire()` in `automation.rs` |
-| Automation details: on/off and `last_triggered` aren't kept across restarts (HA's `core.restore_state`), an automation without an `id` stores traces under its object id (HA keeps none), the `automation_triggered` event and logbook entries | Restore with the recorder step, the rest with the logbook | Running, triggering and tracing are right; these are the edges |
-| Script details: `last_triggered` and traces aren't kept across restarts (HA's `core.restore_state`, `trace.saved_traces`), field defaults and non-entity selector defaults in `get_services`, branch-local variables (HA lets a branch update an outer variable), `continue_on_error` skipping every error (HA stops on configuration errors) | Restore with the recorder step; the rest when a config needs it | Running and tracing are right; these are the edges |
+| Automation details: an automation without an `id` stores traces under its object id (HA keeps none), the `automation_triggered` event and logbook entries | With the logbook | Running, triggering and tracing are right; these are the edges |
+| Script details: traces aren't kept across restarts (HA's `trace.saved_traces`), field defaults and non-entity selector defaults in `get_services`, branch-local variables (HA lets a branch update an outer variable), `continue_on_error` skipping every error (HA stops on configuration errors) | Saved traces (another `.storage` file, not the recorder) when the trace pages need history across restarts; the rest when a config needs it | Running and tracing are right; these are the edges |
+| Restore state: only automations and scripts are lean-home's restore entities; HA's MQTT entities (restore entities in HA, a sensor's value in `extra_data`) keep the entry HA last wrote until it expires after 7 days, and lean-home restores nothing for them (their state comes from retained messages); an entity's registry id is looked up by its entity id | If lean-home restores MQTT entities (optimistic ones, `expire_after` sensors) | Automations' on/off and `last_triggered` survive a restart, as in HA, and HA's other entries survive lean-home |
 | Automation runs: services act on one automation after the other (HA calls them concurrently, which only matters when one `automation.trigger` call names several); `trigger.for` is a `{"__type", "total_seconds"}` dict in templates, a timedelta in HA; time triggers at a wall-clock time a DST change skips or repeats aren't checked against HA (lean-home fires once: at the first of two occurrences, and a skipped 02:30 at 03:30) | Concurrency when a config needs it; `trigger.for` with the template datetime helpers; DST with a recording across a change | Normal runs, traces and timing match the recording |
 | Script variables: a script's `variables:` are rendered in order, each seeing the ones before it, and the caller's run variables are applied after them (HA lets run variables win and renders with them in scope) | When a config relies on a default that reads a run variable | Only differs when both set the same name or a default reads a run variable |
 | Editor saving: only the required keys are validated (HA checks the whole schema and answers 400; lean-home saves the config and its entity is unavailable, with the error in the log); the save answers after the reload (HA answers first); an MQTT trigger's topic stays subscribed after its automation is removed; keys over 128 characters (libyaml's `? key` form) and integers past 2^64 aren't written as HA writes them | Full validation when lean-home knows the whole schema; the rest when a config needs it | The scenario's saves write HA's files byte for byte and reload as HA does |

@@ -28,7 +28,9 @@ device goes offline (`lh/status` → `offline`).
 - `mqtt.jsonl`: every MQTT message in broker order (`topic`, `payload`, `retain`, `qos`).
 - `broker-subscriptions.txt`: the topics HA subscribed to, in order, with QoS.
 - `core.config_entries.json`, `core.entity_registry.json`, `core.device_registry.json`: the
-  `.storage` files HA wrote, which lean-home must read.
+  `.storage` files HA wrote, which lean-home must read. The `automations` scenario also keeps
+  `core.restore_state.json`, the last states HA stored at shutdown, which lean-home restores from
+  and must write the same way (`compare.py` checks its automation and script entries).
 
 Re-record with `compat/capture-mqtt.sh` (same requirements; temp files and the broker log go to
 `bench/.work/capture-mqtt-discovery`).

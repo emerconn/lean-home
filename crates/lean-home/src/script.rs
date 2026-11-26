@@ -460,6 +460,41 @@ impl ScriptEntity {
         states.set(&self.entity_id, "unavailable", attrs, Context::new(None));
     }
 
+    /// What it takes from its stored state at startup (`restore.rs`): `last_triggered`, and an
+    /// automation's on/off unless `initial_state` says.
+    pub(crate) fn restore_stored(&self, state: &Value) {
+        let (last, on) = crate::restore::parse(state);
+        let mut rt = self.rt.lock().unwrap();
+        rt.last_triggered = last;
+        if let Some(on) = on.filter(|_| {
+            self.raw
+                .get("initial_state")
+                .and_then(Value::as_bool)
+                .is_none()
+        }) {
+            rt.enabled = on;
+        }
+    }
+
+    /// Restore from the stored states, if this entity has one.
+    pub(crate) fn restore_from(
+        &self,
+        restore: &crate::restore::Restore,
+        registry: &crate::registry::Registry,
+    ) {
+        let reg = registry.entry_id(&self.entity_id);
+        if let Some(s) = restore.last_state(&self.entity_id, reg.as_deref()) {
+            self.restore_stored(&s);
+        }
+    }
+
+    /// It's going away: its last state goes into the stored states.
+    pub(crate) fn forget(&self, app: &App) {
+        let reg = app.registry.entry_id(&self.entity_id);
+        app.restore
+            .removed(app.states.get(&self.entity_id).as_deref(), reg.as_deref());
+    }
+
     /// What a replacement keeps from the entity it replaces (HA's RestoreEntity reads the last
     /// state): `last_triggered`, and an automation's on/off unless `initial_state` says.
     pub(crate) fn restore(&self, prev: &ScriptEntity) {
@@ -549,6 +584,7 @@ impl Scripts {
         config: &Map<String, Value>,
         registry: &crate::registry::Registry,
         states: &States,
+        restore: &crate::restore::Restore,
     ) -> Self {
         let items: IndexMap<_, _> = config
             .iter()
@@ -559,14 +595,22 @@ impl Scripts {
                 )
             })
             .collect();
-        // shortcut: last_triggered isn't restored across restarts (HA's RestoreEntity reads
-        // .storage/core.restore_state); add with the recorder step.
         for e in items.values() {
+            e.restore_from(restore, registry);
             e.write(states);
         }
         Self {
             items: RwLock::new(items),
         }
+    }
+
+    pub fn entity_ids(&self) -> Vec<String> {
+        self.items
+            .read()
+            .unwrap()
+            .values()
+            .map(|e| e.entity_id.clone())
+            .collect()
     }
 
     fn get(&self, key: &str) -> Option<Arc<ScriptEntity>> {
@@ -590,8 +634,11 @@ impl Scripts {
                     let e = Arc::new(ScriptEntity::script(key, raw, &app.registry));
                     if let Some(prev) = prev {
                         prev.stop().await;
+                        prev.forget(app);
                         prev.write_removed(&app.states);
                         e.restore(prev);
+                    } else {
+                        e.restore_from(&app.restore, &app.registry);
                     }
                     next.insert(key.clone(), e.clone());
                     added.push(e);
@@ -601,6 +648,7 @@ impl Scripts {
         for (key, e) in &old {
             if !next.contains_key(key) {
                 e.stop().await;
+                e.forget(app);
                 e.write_removed(&app.states);
             }
         }
@@ -616,6 +664,7 @@ impl Scripts {
         let e = self.items.write().unwrap().shift_remove(key);
         if let Some(e) = e {
             e.stop().await;
+            e.forget(app);
             app.states.remove(&e.entity_id);
         }
     }
@@ -1537,7 +1586,8 @@ pub(crate) mod tests {
         let reg = crate::registry::Registry::default();
         let states = States::default();
         let cfg = json!({"bad": {"sequence": [{"wait_template": "{{ true }}"}]}});
-        let scripts = Scripts::load(cfg.as_object().unwrap(), &reg, &states);
+        let restore = crate::restore::Restore::load(std::path::Path::new("/nonexistent"));
+        let scripts = Scripts::load(cfg.as_object().unwrap(), &reg, &states, &restore);
         assert_eq!(states.get("script.bad").unwrap().state, "unavailable");
         assert!(scripts.describe().get("bad").is_none());
     }

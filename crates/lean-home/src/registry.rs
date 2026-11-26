@@ -70,6 +70,15 @@ impl Registry {
         })
     }
 
+    /// The registry entry's own id, which restore state is keyed by.
+    pub fn entry_id(&self, entity_id: &str) -> Option<String> {
+        self.entities
+            .iter()
+            .find(|e| e["entity_id"] == entity_id)
+            .and_then(|e| e["id"].as_str())
+            .map(String::from)
+    }
+
     pub fn entity_id_taken(&self, entity_id: &str) -> bool {
         self.entities.iter().any(|e| e["entity_id"] == entity_id)
     }

@@ -178,6 +178,31 @@ def compare_mqtt(rec_dir, rep_dir):
     check(hub(rec_dir) == hub(rep_dir), "MQTT messages published by the hub differ", hub(rec_dir), hub(rep_dir))
 
 
+def compare_restore_state(rec_dir, rep_dir):
+    """The automation and script entries of `.storage/core.restore_state` as written at shutdown:
+    lean-home's restore entities, including the two the editors deleted (kept, as HA keeps a
+    removed entity's last state). Other entities' entries are HA's integrations'."""
+    def entries(path):
+        data = json.loads(path.read_text())["data"]
+        out = {}
+        for e in data:
+            eid = e["state"]["entity_id"]
+            if eid.split(".")[0] in ("automation", "script"):
+                out[eid] = e
+        return out
+
+    ha, lh = entries(rec_dir / "core.restore_state.json"), entries(rep_dir / "core.restore_state.json")
+    compared["restored entities"] = len(ha)
+    check(sorted(ha) == sorted(lh), "restore state: different entities", sorted(ha), sorted(lh))
+    for eid in sorted(set(ha) & set(lh)):
+        a, b = ha[eid], lh[eid]
+        if b["entity_registry_id"] is None and a["entity_registry_id"] == "<hex32>":
+            # Created in the editor: HA added a registry entry, lean-home's registry is read-only
+            # (docs/architecture.md, "Deferred").
+            b = {**b, "entity_registry_id": "<hex32>"}
+        check(a == b, f"restore state of {eid} differs", a, b)
+
+
 def main():
     scenario, rec_dir, rep_dir = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     compare_http(rec_dir, rep_dir)
@@ -192,6 +217,7 @@ def main():
             ha, lh = (rec_dir / f"{f}.saved.yaml").read_text(), (rep_dir / "config" / f"{f}.yaml").read_text()
             compared["saved files"] = compared.get("saved files", 0) + 1
             check(ha == lh, f"{f}.yaml as saved by the editor differs", ha, lh)
+        compare_restore_state(rec_dir, rep_dir)
     if problems:
         print(f"{scenario}: {len(problems)} difference(s) from the HA recording:")
         for p in problems:
