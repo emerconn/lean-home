@@ -112,10 +112,10 @@ Not a numbered step: what it takes to run lean-home somewhere real.
   Check before dropping gzip: Chromium is believed to accept brotli only over HTTPS, and most
   people open the hub over plain HTTP on the LAN, so the gzip copies (~8 MB) may have to stay.
   Test it rather than guess.
-- [ ] aarch64 image (multi-arch build) for the Pi and the router.
+- [x] aarch64 image (multi-arch build) for the Pi and the router.
 - [x] Releases (release-plz: merging its release PR tags the version and creates the GitHub release)
   and the image published on each release (`.github/workflows/publish.yaml`):
-  `ghcr.io/emerconn/lean-home:<version>` and `:latest`, x86_64.
+  `ghcr.io/emerconn/lean-home:<version>` and `:latest`, amd64 and arm64.
 - [ ] Measure on the target (1 GB ARM64): memory, idle CPU, startup time and image size, under the
   [measurement rules](architecture.md#measurement-rules). Until now everything was measured on the
   dev PC.
