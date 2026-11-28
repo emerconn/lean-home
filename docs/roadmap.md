@@ -24,9 +24,9 @@ item names the roadmap step that covers it.
   sensors (Pi CPU, temperature, fan, memory, disk, containers), 5 `rest` resources with 16
   sensors and a binary sensor (router over RouterOS REST, the printer's Moonraker), a
   `rest_command`. Step 3.
-- [ ] **Its automation** (`thermostat_room_sensor`): state and `time_pattern` triggers, queued mode
+- [x] **Its automation** (`thermostat_room_sensor`): state and `time_pattern` triggers, queued mode
   with `max`, `variables`, and templates with `has_value`, `states[x].last_reported`, `now()` and
-  `timedelta`. Step 2 (`time_pattern`; template helpers done).
+  `timedelta`. Step 2 (`time_pattern` and template helpers done).
 - [ ] **History**: the dashboard's graphs, 7 days of history, a 30 s commit interval (flash wear).
   Step 4.
 - [ ] **Companion app** (iOS, `mobile_app`), through the reverse proxy. Step 5.
@@ -79,8 +79,9 @@ What each checked item built and how it was checked: [step-2.md](step-2.md).
   [saving](step-2.md#the-editors-saving), with reload.
 - [x] [Packages](step-2.md#packages).
 - [x] [Restore state](step-2.md#restore-state): on/off and `last_triggered` across restarts.
-- [ ] Triggers `numeric_state`, `time_pattern` (the reference house's automation), `homeassistant`
-  (start/shutdown), `template`; the `time` condition.
+- [x] [Triggers `numeric_state`, `time_pattern`](step-2.md#numeric_state-time_pattern-homeassistant-template-and-time-condition)
+  (the reference house's automation), `homeassistant` (start/shutdown), `template`; the `time`
+  condition.
 - [ ] Actions `wait_for_trigger`, `wait_template`, `repeat`, `sequence`, `parallel`; the `event`
   trigger and action (needs a general event bus).
 - [x] [The template helpers configs use](step-2.md#timedelta-and-last_reported), starting with
@@ -206,13 +207,13 @@ why it can wait.
 - [ ] **Script actions not built yet**: `wait_template`, `wait_for_trigger`, `repeat`, `parallel`,
   `sequence`, `event`, `scene`, device actions, service responses (`response_variable`). A script
   using one is unavailable, with the error in the log. *When:* step 2's actions item.
-- [ ] **Conditions not built yet**: `time`, `sun`, `zone`, `device`. *When:* `time` and `sun` with
-  step 2; the rest by demand.
-- [ ] **Triggers not built yet**: `event`, `numeric_state`, `template`, `homeassistant`, `sun`,
-  `time_pattern`, `device`…; time triggers at an `input_datetime` or timestamp sensor or with an
-  offset; MQTT topic templates; `trigger_variables`; HA's `not_triggered` traces. An automation
-  using one is unavailable, with the error in the log. *When:* step 2's trigger items. *Why:* each
-  is small next to the engine; they share `fire()` in `automation.rs`.
+- [ ] **Conditions not built yet**: `sun`, `zone`, `device`. *When:* `sun` with step 2; the rest
+  by demand.
+- [ ] **Triggers not built yet**: `event`, `sun`, `device`…; time triggers at an `input_datetime`
+  or timestamp sensor or with an offset; MQTT topic templates; `trigger_variables`; HA's
+  `not_triggered` traces. An automation using one is unavailable, with the error in the log.
+  *When:* step 2's trigger items. *Why:* each is small next to the engine; they share `fire()` in
+  `automation.rs`.
 - [ ] **Blueprints**: `!input` loads as a `{"!input": name}` marker, and `use_blueprint`
   automations aren't expanded. *When:* step 2's blueprints item.
 - [ ] **Automation details**: an automation without an `id` stores traces under its object id (HA

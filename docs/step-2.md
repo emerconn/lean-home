@@ -198,3 +198,16 @@ and filter). Added `last_reported` to `State` so unchanged `States::set` calls a
 `ha_template_cases` now compares 212 of 611 cases (+17 for `timedelta`, `as_timedelta`, and
 `timedelta_string`) with 0 differences, plus unit tests in `state.rs` and `template.rs`. Binary
 size and memory measurements were not taken separately for this change.
+
+## numeric_state, time_pattern, homeassistant, template, and time condition
+
+(Done: `automation.rs`, `condition.rs`, `main.rs`, `template.rs`.) Added the `numeric_state`
+trigger (edge-armed per entity, `above`/`below` numbers or entity bounds, `attribute`,
+`value_template`, `for:`, `unavailable` disarm), `template` trigger (edge-triggered with
+`Listeners` tracking and `for:`), `homeassistant` trigger (`start` after `arm`ing in `start()`,
+`shutdown` awaited in `stop()` before exit), `time_pattern` trigger (`hours`/`minutes`/`seconds`
+defaults and matching), and the `time` condition (`after`, `before`, `weekday`, `entity_id`
+bounds, overnight wrap). Checked against real HA 2026.11.2 via
+`compat/fixtures/step2/pr2-triggers-conditions.json` (`compat/record-pr2.py`) in `automation.rs`
+and `condition.rs` unit tests. Binary size and memory measurements were not taken separately for
+this change.
