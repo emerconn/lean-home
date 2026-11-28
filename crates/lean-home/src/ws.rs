@@ -626,6 +626,7 @@ fn condition_event(app: &App, c: &crate::condition::Condition, last: &mut Value)
         states: &app.states,
         vars: &vars,
         trace: None,
+        core: Some(&app.config.core),
     };
     let now = match c.check(&ev, "", None) {
         Ok(b) => json!({"result": b}),

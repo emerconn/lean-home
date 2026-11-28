@@ -6,9 +6,10 @@ use std::sync::Arc;
 use chrono::{DateTime, Datelike, NaiveTime, Utc};
 use serde_json::{Map, Value, json};
 
-use crate::config::Zone;
-use crate::script::{render_complex, time_period};
+use crate::config::{Core, Zone};
+use crate::script::{render_complex, signed_time_period, time_period};
 use crate::state::{States, iso};
+use crate::sun::{self, SunEvent};
 use crate::template;
 use crate::trace::{ElementRef, Recorder};
 
@@ -47,6 +48,12 @@ pub enum Condition {
         after: Option<TimeBound>,
         before: Option<TimeBound>,
         weekdays: Option<Vec<String>>,
+    },
+    Sun {
+        before: Option<SunEvent>,
+        after: Option<SunEvent>,
+        before_offset: chrono::Duration,
+        after_offset: chrono::Duration,
     },
 }
 
@@ -151,7 +158,37 @@ impl Condition {
                     weekdays,
                 }
             }
-            // shortcut: sun, zone, device… conditions come with the configs that use them.
+            "sun" => {
+                let parse_event = |k: &str| -> Result<Option<SunEvent>, String> {
+                    m.get(k)
+                        .map(|v| {
+                            v.as_str()
+                                .ok_or_else(|| format!("sun condition: '{k}' must be a string"))
+                                .and_then(SunEvent::parse)
+                        })
+                        .transpose()
+                };
+                let parse_offset = |k: &str| -> Result<chrono::Duration, String> {
+                    match m.get(k) {
+                        None | Some(Value::Null) => Ok(chrono::Duration::zero()),
+                        Some(v) => signed_time_period(v)
+                            .map(|s| chrono::Duration::microseconds((s * 1e6).round() as i64))
+                            .map_err(|e| format!("sun condition: {e}")),
+                    }
+                };
+                let before = parse_event("before")?;
+                let after = parse_event("after")?;
+                if before.is_none() && after.is_none() {
+                    return Err("sun condition: must contain at least one of before, after".into());
+                }
+                Self::Sun {
+                    before,
+                    after,
+                    before_offset: parse_offset("before_offset")?,
+                    after_offset: parse_offset("after_offset")?,
+                }
+            }
+            // shortcut: zone, device… conditions come with the configs that use them.
             other => return Err(format!("condition type '{other}' is not supported yet")),
         })
     }
@@ -162,6 +199,7 @@ pub struct Eval<'a> {
     pub states: &'a Arc<States>,
     pub vars: &'a Map<String, Value>,
     pub trace: Option<&'a Recorder>,
+    pub core: Option<&'a Core>,
 }
 
 impl Eval<'_> {
@@ -321,8 +359,104 @@ impl Condition {
                 template::now_utc(),
                 &template::local_tz(),
             ),
+            Self::Sun {
+                before,
+                after,
+                before_offset,
+                after_offset,
+            } => Ok(eval_sun(
+                ev,
+                at,
+                Utc::now(),
+                *before,
+                *after,
+                *before_offset,
+                *after_offset,
+            )),
         }
     }
+}
+
+/// HA's `components/sun/condition.py` `sun()` evaluated at `now`.
+fn eval_sun(
+    ev: &Eval,
+    at: &Option<ElementRef>,
+    now: DateTime<Utc>,
+    before: Option<SunEvent>,
+    after: Option<SunEvent>,
+    before_offset: chrono::Duration,
+    after_offset: chrono::Duration,
+) -> bool {
+    let default_core = Core::default();
+    let core = ev.core.unwrap_or(&default_core);
+    let obs = sun::Observer::from_core(core);
+    let today = (now + core.tz.offset(now)).date_naive();
+    let local_date = |dt: DateTime<Utc>| (dt + core.tz.offset(dt)).date_naive();
+
+    let has_sunrise = before == Some(SunEvent::Sunrise) || after == Some(SunEvent::Sunrise);
+    let has_sunset = before == Some(SunEvent::Sunset) || after == Some(SunEvent::Sunset);
+
+    let mut sunrise = has_sunrise.then(|| sun::sunrise(obs, today)).flatten();
+    let mut sunset = has_sunset.then(|| sun::sunset(obs, today)).flatten();
+
+    if has_sunrise && sunrise.is_some_and(|sr| today > local_date(sr)) {
+        sunrise = today
+            .succ_opt()
+            .and_then(|tomorrow| sun::sunrise(obs, tomorrow));
+    }
+    if has_sunset && sunset.is_some_and(|ss| today > local_date(ss)) {
+        sunset = today
+            .succ_opt()
+            .and_then(|tomorrow| sun::sunset(obs, tomorrow));
+    }
+
+    if has_sunrise && sunrise.is_none() {
+        ev.set(at, json!({"result": false, "message": "no sunrise today"}));
+        return false;
+    }
+    if has_sunset && sunset.is_none() {
+        ev.set(at, json!({"result": false, "message": "no sunset today"}));
+        return false;
+    }
+
+    let event_time = |e: SunEvent| match e {
+        SunEvent::Sunrise => sunrise.unwrap(),
+        SunEvent::Sunset => sunset.unwrap(),
+    };
+
+    if before == Some(SunEvent::Sunrise) && after == Some(SunEvent::Sunset) {
+        let wanted_before = event_time(SunEvent::Sunrise) + before_offset;
+        let wanted_after = event_time(SunEvent::Sunset) + after_offset;
+        ev.set(
+            at,
+            json!({
+                "wanted_time_before": iso(wanted_before),
+                "wanted_time_after": iso(wanted_after),
+            }),
+        );
+        return now < wanted_before || now > wanted_after;
+    }
+
+    let mut trace_obj = Map::new();
+    let mut pass = true;
+    if let Some(b) = before {
+        let wanted_before = event_time(b) + before_offset;
+        trace_obj.insert("wanted_time_before".into(), iso(wanted_before).into());
+        if now > wanted_before {
+            pass = false;
+        }
+    }
+    if pass && let Some(a) = after {
+        let wanted_after = event_time(a) + after_offset;
+        trace_obj.insert("wanted_time_after".into(), iso(wanted_after).into());
+        if now < wanted_after {
+            pass = false;
+        }
+    }
+    if !trace_obj.is_empty() {
+        ev.set(at, Value::Object(trace_obj));
+    }
+    pass
 }
 
 /// `cv.string`: a trigger id written as a number is its text.
@@ -670,6 +804,7 @@ mod tests {
             states: &s,
             vars: &vars,
             trace: Some(&rec),
+            core: None,
         };
         let r = Condition::parse(&cond).unwrap().check(&ev, "c", None);
         rec.finish("finished", None);
@@ -739,7 +874,60 @@ mod tests {
             json!({"not": [{"condition": "state", "entity_id": "switch.fan", "state": "on"}]}),
         );
         assert_eq!(r, Ok(true));
-        assert!(Condition::parse(&json!({"condition": "sun", "after": "sunset"})).is_err());
+        assert!(
+            Condition::parse(
+                &json!({"condition": "zone", "entity_id": "person.a", "zone": "zone.home"})
+            )
+            .is_err()
+        );
+        assert!(Condition::parse(&json!({"condition": "sun"})).is_err());
+        assert!(Condition::parse(&json!({"condition": "sun", "after": "sunset"})).is_ok());
+    }
+
+    #[test]
+    fn sun_conditions_match_ha_fixture() {
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../compat/fixtures/step2/pr5-sun.json"
+        ))
+        .expect("read pr5-sun.json");
+        let fix: Value = serde_json::from_str(&raw).expect("parse pr5-sun.json");
+        let core = Core {
+            latitude: fix["location"]["latitude"].clone(),
+            longitude: fix["location"]["longitude"].clone(),
+            elevation: fix["location"]["elevation"].clone(),
+            ..Default::default()
+        };
+        let s = states();
+        let vars = Map::new();
+        let ev = Eval {
+            states: &s,
+            vars: &vars,
+            trace: None,
+            core: Some(&core),
+        };
+        for case in fix["sun_conditions"].as_array().unwrap() {
+            let cond = Condition::parse(&case["config"]).unwrap();
+            let Condition::Sun {
+                before,
+                after,
+                before_offset,
+                after_offset,
+            } = cond
+            else {
+                panic!("expected Sun condition");
+            };
+            for (ts, expected) in case["results"].as_object().unwrap() {
+                let now: DateTime<Utc> = ts.parse().unwrap();
+                let got = eval_sun(&ev, &None, now, before, after, before_offset, after_offset);
+                assert_eq!(
+                    got,
+                    expected.as_bool().unwrap(),
+                    "config={} at {ts}",
+                    case["config"]
+                );
+            }
+        }
     }
 
     #[test]
@@ -751,6 +939,7 @@ mod tests {
             states: &s,
             vars: &vars,
             trace: None,
+            core: None,
         };
         let check = |c: Value| Condition::parse(&c).unwrap().check(&ev, "c", None);
         assert_eq!(
@@ -798,6 +987,7 @@ mod tests {
             states: &s,
             vars: &vars,
             trace: None,
+            core: None,
         };
         let utc = Zone::utc();
         for case in fixture["time_conditions"].as_array().unwrap() {

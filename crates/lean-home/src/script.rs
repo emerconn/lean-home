@@ -279,10 +279,11 @@ pub(crate) fn render_complex(
 
 /// HA's `cv.positive_time_period`: seconds, `HH:MM[:SS[.f]]`, or `{days, hours, minutes,
 /// seconds, milliseconds}`.
-pub(crate) fn time_period(v: &Value) -> Result<f64, String> {
+/// Parse a duration in seconds, allowing negative values (HA's `cv.time_period`).
+pub(crate) fn signed_time_period(v: &Value) -> Result<f64, String> {
     let bad = || format!("offset {v} should be format 'HH:MM', 'HH:MM:SS' or 'HH:MM:SS.F'");
-    let secs = match v {
-        Value::Number(n) => n.as_f64().ok_or_else(bad)?,
+    match v {
+        Value::Number(n) => n.as_f64().ok_or_else(bad),
         Value::String(s) if s.contains(':') => {
             let (neg, s) = s
                 .strip_prefix('-')
@@ -297,9 +298,9 @@ pub(crate) fn time_period(v: &Value) -> Result<f64, String> {
                 [h, m, sec] => h * 3600.0 + m * 60.0 + sec,
                 _ => return Err(bad()),
             };
-            if neg { -total } else { total }
+            Ok(if neg { -total } else { total })
         }
-        Value::String(s) => s.trim().parse::<f64>().map_err(|_| bad())?,
+        Value::String(s) => s.trim().parse::<f64>().map_err(|_| bad()),
         Value::Object(m) => {
             let f = |k: &str| {
                 m.get(k)
@@ -309,14 +310,18 @@ pub(crate) fn time_period(v: &Value) -> Result<f64, String> {
                     })
                     .unwrap_or(0.0)
             };
-            f("days") * 86400.0
+            Ok(f("days") * 86400.0
                 + f("hours") * 3600.0
                 + f("minutes") * 60.0
                 + f("seconds")
-                + f("milliseconds") / 1000.0
+                + f("milliseconds") / 1000.0)
         }
-        _ => return Err(bad()),
-    };
+        _ => Err(bad()),
+    }
+}
+
+pub(crate) fn time_period(v: &Value) -> Result<f64, String> {
+    let secs = signed_time_period(v)?;
     if secs < 0.0 {
         return Err("Time period must be positive".into());
     }
@@ -1191,6 +1196,7 @@ impl Run {
             states: &self.app.states,
             vars,
             trace: Some(&self.trace),
+            core: Some(&self.app.config.core),
         };
         let mut result = Some(true);
         for (i, c) in conds.iter().enumerate() {
@@ -1357,6 +1363,7 @@ impl Run {
                     states: &self.app.states,
                     vars,
                     trace: Some(&self.trace),
+                    core: Some(&self.app.config.core),
                 };
                 let ok = match condition.check(&ev, path, Some(el.clone())) {
                     Ok(b) => b,

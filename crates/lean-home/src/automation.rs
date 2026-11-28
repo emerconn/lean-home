@@ -14,10 +14,12 @@ use tokio::task::AbortHandle;
 
 use crate::condition::{Condition, Eval, WEEKDAYS, entity_ids, id_string, parse_weekdays};
 use crate::mqtt::{slugify, topic_matches};
-use crate::script::{Halt, ScriptEntity, Vars, launch, render_complex, time_period};
+use crate::script::{
+    Halt, ScriptEntity, Vars, launch, render_complex, signed_time_period, time_period,
+};
 use crate::services::Outcome;
 use crate::state::{Change, Context, Event, States};
-use crate::{App, template};
+use crate::{App, sun, template};
 
 /// One `triggers:` entry: HA's `TriggerData` (`id`, `idx`, `alias`) and the platform's config.
 #[derive(Debug)]
@@ -77,6 +79,10 @@ enum Kind {
         event_types: Vec<String>,
         event_data: Option<Map<String, Value>>,
         context: Option<Map<String, Value>>,
+    },
+    Sun {
+        event: sun::SunEvent,
+        offset: chrono::Duration,
     },
 }
 
@@ -274,7 +280,22 @@ fn parse_trigger(idx: usize, v: &Value) -> Result<Trigger, String> {
                 context,
             }
         }
-        // shortcut: the other platforms (sun…)
+        "sun" => {
+            let event_str = str_opt("event").ok_or("required key not provided @ data['event']")?;
+            let event = sun::SunEvent::parse(&event_str)?;
+            let mut secs = match m.get("offset") {
+                None | Some(Value::Null) => 0.0,
+                Some(v) => signed_time_period(v)?,
+            };
+            if str_opt("offset_type").as_deref() == Some("before") {
+                secs = -secs;
+            }
+            Kind::Sun {
+                event,
+                offset: chrono::Duration::microseconds((secs * 1e6).round() as i64),
+            }
+        }
+        // shortcut: the other platforms (zone, device…)
         // come with the configs that use them; an automation using one is unavailable.
         other => return Err(format!("trigger platform '{other}' is not supported yet")),
     };
@@ -708,6 +729,15 @@ fn arm(app: &Arc<App>, a: &Arc<Automation>) {
                     app.clone(),
                     a.clone(),
                     ti,
+                )));
+            }
+            Kind::Sun { event, offset } => {
+                tasks.push(tokio::spawn(sun_trigger(
+                    app.clone(),
+                    a.clone(),
+                    ti,
+                    *event,
+                    *offset,
                 )));
             }
         }
@@ -1687,6 +1717,38 @@ pub(crate) async fn wait_for_triggers(
                     });
                 }
             }
+            Kind::Sun { event, offset } => {
+                let (app2, trigs, tx, event, offset) = (
+                    app.clone(),
+                    triggers.0.clone(),
+                    hit_tx.clone(),
+                    *event,
+                    *offset,
+                );
+                set.spawn(async move {
+                    let core = &app2.config.core;
+                    let obs = sun::Observer::from_core(core);
+                    let Some(next) = sun::event_next(obs, event, Utc::now(), offset, &core.tz)
+                    else {
+                        return;
+                    };
+                    loop {
+                        let left = (next - Utc::now()).to_std().unwrap_or_default();
+                        if left > Duration::from_secs(60) {
+                            tokio::time::sleep(Duration::from_secs(60)).await;
+                            continue;
+                        }
+                        tokio::time::sleep(left).await;
+                        let mut data = trigs[ti].data("sun");
+                        data.insert(
+                            "description".into(),
+                            format!("sun event {}", event.as_str()).into(),
+                        );
+                        let _ = tx.send((data, Context::new(None)));
+                        return;
+                    }
+                });
+            }
             Kind::State { .. }
             | Kind::Event { .. }
             | Kind::NumericState { .. }
@@ -1911,6 +1973,47 @@ async fn time_pattern_trigger(app: Arc<App>, a: Arc<Automation>, ti: usize) {
     }
 }
 
+/// A sun trigger's timer (HA's `SunEventTrigger`), firing at `event + offset`.
+async fn sun_trigger(
+    app: Arc<App>,
+    a: Arc<Automation>,
+    ti: usize,
+    event: sun::SunEvent,
+    offset: chrono::Duration,
+) {
+    #[cfg(test)]
+    let base = (Utc::now(), tokio::time::Instant::now());
+    let now = || {
+        #[cfg(test)]
+        return base.0 + (tokio::time::Instant::now() - base.1);
+        #[cfg(not(test))]
+        Utc::now()
+    };
+    let core = &app.config.core;
+    let observer = sun::Observer::from_core(core);
+    let mut after = now();
+    loop {
+        let Some(next) = sun::event_next(observer, event, now().max(after), offset, &core.tz)
+        else {
+            return;
+        };
+        let left = (next - now()).to_std().unwrap_or_default();
+        if left > Duration::from_secs(60) {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            continue;
+        }
+        tokio::time::sleep(left).await;
+        after = next;
+        let t = &a.triggers[ti];
+        let mut data = t.data("sun");
+        data.insert(
+            "description".into(),
+            format!("sun event {}", event.as_str()).into(),
+        );
+        fire(&app, &a, t, data, None);
+    }
+}
+
 /// Run an automation (HA's `AutomationEntity.async_trigger`): trace the trigger, check the
 /// conditions, then run the actions with a context whose parent is the trigger's. Returns the
 /// run's trace id.
@@ -1961,6 +2064,7 @@ async fn trigger(
             states: &app.states,
             vars: &vars,
             trace: Some(&trace),
+            core: Some(&app.config.core),
         };
         let mut pass = true;
         let mut errors = vec![];
@@ -2429,7 +2533,9 @@ mod tests {
         assert!(
             p(json!({"trigger": "state", "entity_id": "a.b", "attribute": "x", "to": 5})).is_ok()
         );
-        assert!(p(json!({"trigger": "sun", "event": "sunset"})).is_err());
+        assert!(p(json!({"trigger": "zone", "entity_id": "person.a", "zone": "zone.home", "event": "enter"})).is_err());
+        assert!(p(json!({"trigger": "sun", "event": "sunset"})).is_ok());
+        assert!(p(json!({"trigger": "sun", "event": "sunrise", "offset": "-00:30:00"})).is_ok());
         let t = p(json!({"platform": "time", "at": ["03:00", "04:05:06"], "id": 7})).unwrap();
         assert_eq!(t.id, "7");
         assert!(matches!(t.kind, Kind::Time { ref at, .. } if at.len() == 2));
@@ -2702,5 +2808,54 @@ mod tests {
             .set("sensor.temp", "27", Map::new(), Context::new(None));
         tokio::time::sleep(Duration::from_secs(6)).await;
         assert_eq!(app.traces.list("automation", Some("ns_for")).len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sun_trigger_fires_with_offset() {
+        let now = Utc::now();
+        let obs = sun::Observer {
+            latitude: 0.0,
+            longitude: 0.0,
+            elevation: 0.0,
+        };
+        // Schedule sunset + offset to land 5 seconds after `now`.
+        let next_ss = sun::event_next(
+            obs,
+            sun::SunEvent::Sunset,
+            now - chrono::Duration::days(1),
+            chrono::Duration::zero(),
+            &crate::config::Zone::utc(),
+        )
+        .unwrap();
+        let offset_secs = (now + chrono::Duration::seconds(5) - next_ss).num_seconds();
+        let cfg = format!(
+            "- id: sun_auto\n  alias: Sun Auto\n  triggers:\n    - trigger: sun\n      event: sunset\n      offset: {offset_secs}\n  actions:\n    - action: light.turn_on\n      target:\n        entity_id: light.demo_device_desk\n"
+        );
+        let app = app(Some(&cfg));
+        start(&app);
+        tokio::time::sleep(Duration::from_secs(7)).await;
+        let runs = app.traces.list("automation", Some("sun_auto"));
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0]["script_execution"], "finished");
+        let t = app
+            .traces
+            .get(
+                "automation",
+                "sun_auto",
+                runs[0]["run_id"].as_str().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            t["trace"]["trigger/0"][0]["changed_variables"]["trigger"]["platform"],
+            "sun"
+        );
+        assert_eq!(
+            t["trace"]["trigger/0"][0]["changed_variables"]["trigger"]["description"],
+            "sun event sunset"
+        );
+        assert_eq!(
+            app.states.get("light.demo_device_desk").unwrap().state,
+            "on"
+        );
     }
 }
