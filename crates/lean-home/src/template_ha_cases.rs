@@ -38,6 +38,11 @@ const IMPLEMENTED: &[&str] = &[
     "utcnow",
     "as_timestamp",
     "filter:as_timestamp",
+    "timedelta",
+    "as_timedelta",
+    "filter:as_timedelta",
+    "timedelta_string",
+    "filter:timedelta_string",
     "filter:to_json",
     "filter:from_json",
 ];

@@ -26,7 +26,7 @@ item names the roadmap step that covers it.
   `rest_command`. Step 3.
 - [ ] **Its automation** (`thermostat_room_sensor`): state and `time_pattern` triggers, queued mode
   with `max`, `variables`, and templates with `has_value`, `states[x].last_reported`, `now()` and
-  `timedelta`. Step 2 (`time_pattern`, the template helpers).
+  `timedelta`. Step 2 (`time_pattern`; template helpers done).
 - [ ] **History**: the dashboard's graphs, 7 days of history, a 30 s commit interval (flash wear).
   Step 4.
 - [ ] **Companion app** (iOS, `mobile_app`), through the reverse proxy. Step 5.
@@ -83,13 +83,12 @@ What each checked item built and how it was checked: [step-2.md](step-2.md).
   (start/shutdown), `template`; the `time` condition.
 - [ ] Actions `wait_for_trigger`, `wait_template`, `repeat`, `sequence`, `parallel`; the `event`
   trigger and action (needs a general event bus).
-- [ ] The template helpers configs use, starting with the house's: `timedelta`, `last_reported`
-  on states ([Gaps, templates](#templates)).
+- [x] [The template helpers configs use](step-2.md#timedelta-and-last_reported), starting with
+  the house's: `timedelta` (`as_timedelta`, `timedelta_string`), `last_reported` on states
+  ([Gaps, templates](#templates)).
 - [ ] Blueprints: `use_blueprint` automations, starting with the two HA puts in every config dir
   (motion light, which needs `wait_for_trigger`; zone notification).
 - [ ] `sun` trigger and condition (sunrise and sunset checked against HA's `astral`).
-- [ ] Upgrade to the next HA release, with the checklist in [compatibility](compatibility.md):
-  paused (staying on 2026.11.2 for now).
 
 ### Running it
 
@@ -169,6 +168,11 @@ small next to an integration, and none needing Python.
 - [ ] Assist pipeline and a Wyoming client (STT, TTS and wake-word sidecars; ESPHome voice
   satellites). See [voice](architecture.md#voice-assist-pipeline-and-wyoming).
 
+### 10. Upgrade to the next HA release
+
+- [ ] Upgrade to the next HA release, with the checklist in [compatibility](compatibility.md):
+  paused (staying on 2026.11.2 for now).
+
 ## Gaps
 
 Shortcuts we chose not to close yet. Each has a `shortcut:` comment at the code it affects; a
@@ -178,14 +182,14 @@ why it can wait.
 ### Templates
 
 - [ ] **HA helpers not built yet**, by the HA test cases that need them (`ha_template_cases`
-  prints the full list): datetime (`strptime` 26, `timedelta`/`as_timedelta`/`timedelta_string`
-  30, `relative_time`/`time_since`/`time_until` 30, `today_at`, `as_local`, `timestamp_*`), math
+  prints the full list): datetime (`strptime` 26,
+  `relative_time`/`time_since`/`time_until` 30, `today_at`, `as_local`, `timestamp_*`), math
   (`average`, `median`, `statistical_mode`, `log`, trig, bitwise, `clamp`, `min`/`max` as
   globals), state (`expand` 12, `closest`/`distance` 23, `state_translated`/`state_attr_translated`
   16, `integration_entities`), regex (24), collections (`flatten`, `combine`,
   `union`/`intersect`/`difference`…), areas/devices/floors/labels (~70), strings (`slugify`,
   `ordinal`, `wrap`), `typeof`, hashes, base64, `version`, issues. *When:* by what automations
-  use (the house needs `timedelta` and `last_reported`); regenerate the count with the corpus.
+  use; regenerate the count with the corpus.
   *Why:* each is small, with HA's cases waiting in the corpus: add it to `IMPLEMENTED` in
   `template_ha_cases.rs` and they start being compared.
 - [ ] **Undefined-variable warnings** name the first undefined variable only, and none for a

@@ -268,6 +268,7 @@ mod tests {
             state: "off".into(),
             attributes: Default::default(),
             last_changed: Utc::now(),
+            last_reported: Utc::now(),
             last_updated: Utc::now(),
             context: Context::new(None),
         };

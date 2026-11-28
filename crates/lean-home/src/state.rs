@@ -34,6 +34,7 @@ pub struct State {
     pub state: String,
     pub attributes: Map<String, Value>,
     pub last_changed: DateTime<Utc>,
+    pub last_reported: DateTime<Utc>,
     pub last_updated: DateTime<Utc>,
     pub context: Context,
 }
@@ -74,14 +75,25 @@ impl States {
     ) {
         let mut map = self.map.lock().unwrap();
         let old = map.get(entity_id).cloned();
-        // HA fires no state_changed when nothing changed (only state_reported, which we don't track yet).
-        if old
+        let now = Utc::now();
+        // HA fires no state_changed when nothing changed (only state_reported, which updates
+        // last_reported without emitting a state_changed event).
+        if let Some(o) = old
             .as_ref()
-            .is_some_and(|o| o.state == state && o.attributes == attributes)
+            .filter(|o| o.state == state && o.attributes == attributes)
         {
+            let reported = Arc::new(State {
+                entity_id: o.entity_id.clone(),
+                state: o.state.clone(),
+                attributes: o.attributes.clone(),
+                last_changed: o.last_changed,
+                last_reported: now,
+                last_updated: o.last_updated,
+                context: o.context.clone(),
+            });
+            map.insert(o.entity_id.clone(), reported);
             return;
         }
-        let now = Utc::now();
         let entity_id: Arc<str> = old
             .as_ref()
             .map_or_else(|| entity_id.into(), |o| o.entity_id.clone());
@@ -93,6 +105,7 @@ impl States {
                 .as_ref()
                 .filter(|o| o.state == state)
                 .map_or(now, |o| o.last_changed),
+            last_reported: now,
             last_updated: now,
             context: context.clone(),
         });
@@ -149,13 +162,14 @@ impl State {
     /// `State.as_dict()`
     pub fn json(&self) -> Value {
         let lc = iso(self.last_changed);
+        let lr = iso(self.last_reported);
         let lu = iso(self.last_updated);
         json!({
             "entity_id": &*self.entity_id,
             "state": self.state,
             "attributes": self.attributes,
             "last_changed": lc,
-            "last_reported": lu,
+            "last_reported": lr,
             "last_updated": lu,
             "context": self.context.json(),
         })
@@ -300,7 +314,8 @@ mod tests {
         assert_eq!(plus["a"], json!({"color_mode": "onoff"}));
         assert!(plus["lc"].is_f64() && plus.get("lu").is_none());
 
-        // Unchanged state: no event.
+        // Unchanged state: no event, but last_reported advances.
+        let before = s.get("light.x").unwrap();
         s.set(
             "light.x",
             "on",
@@ -308,6 +323,10 @@ mod tests {
             Context::new(None),
         );
         assert!(rx.try_recv().is_err());
+        let after = s.get("light.x").unwrap();
+        assert_eq!(after.last_changed, before.last_changed);
+        assert_eq!(after.last_updated, before.last_updated);
+        assert!(after.last_reported >= before.last_reported);
 
         s.set(
             "light.x",
