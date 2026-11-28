@@ -2682,8 +2682,12 @@ mod tests {
         app.states
             .set("sensor.temp", "20", Map::new(), Context::new(None));
         start(&app);
+        tokio::task::yield_now().await;
         // 60 s has 3 * 20 s ticks
         tokio::time::sleep(Duration::from_secs(60)).await;
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
         assert_eq!(app.traces.list("automation", Some("tp")).len(), 3);
 
         app.states
