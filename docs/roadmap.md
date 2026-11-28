@@ -82,8 +82,8 @@ What each checked item built and how it was checked: [step-2.md](step-2.md).
 - [x] [Triggers `numeric_state`, `time_pattern`](step-2.md#numeric_state-time_pattern-homeassistant-template-and-time-condition)
   (the reference house's automation), `homeassistant` (start/shutdown), `template`; the `time`
   condition.
-- [ ] Actions `wait_for_trigger`, `wait_template`, `repeat`, `sequence`, `parallel`; the `event`
-  trigger and action (needs a general event bus).
+- [x] [Actions `wait_for_trigger`, `wait_template`, `repeat`, `sequence`, `parallel`; the `event`
+  trigger and action](step-2.md#actions-and-event-bus) (general event bus).
 - [x] [The template helpers configs use](step-2.md#timedelta-and-last_reported), starting with
   the house's: `timedelta` (`as_timedelta`, `timedelta_string`), `last_reported` on states
   ([Gaps, templates](#templates)).
@@ -204,12 +204,11 @@ why it can wait.
 
 ### Automations and scripts
 
-- [ ] **Script actions not built yet**: `wait_template`, `wait_for_trigger`, `repeat`, `parallel`,
-  `sequence`, `event`, `scene`, device actions, service responses (`response_variable`). A script
-  using one is unavailable, with the error in the log. *When:* step 2's actions item.
+- [ ] **Script actions not built yet**: `scene`, device actions, service responses (`response_variable`). A script
+  using one is unavailable, with the error in the log. *When:* by demand.
 - [ ] **Conditions not built yet**: `sun`, `zone`, `device`. *When:* `sun` with step 2; the rest
   by demand.
-- [ ] **Triggers not built yet**: `event`, `sun`, `device`…; time triggers at an `input_datetime`
+- [ ] **Triggers not built yet**: `sun`, `device`…; time triggers at an `input_datetime`
   or timestamp sensor or with an offset; MQTT topic templates; `trigger_variables`; HA's
   `not_triggered` traces. An automation using one is unavailable, with the error in the log.
   *When:* step 2's trigger items. *Why:* each is small next to the engine; they share `fire()` in

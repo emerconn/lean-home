@@ -14,9 +14,9 @@ use tokio::task::AbortHandle;
 
 use crate::condition::{Condition, Eval, WEEKDAYS, entity_ids, id_string, parse_weekdays};
 use crate::mqtt::{slugify, topic_matches};
-use crate::script::{ScriptEntity, Vars, launch, render_complex, time_period};
+use crate::script::{Halt, ScriptEntity, Vars, launch, render_complex, time_period};
 use crate::services::Outcome;
-use crate::state::{Change, Context, States};
+use crate::state::{Change, Context, Event, States};
 use crate::{App, template};
 
 /// One `triggers:` entry: HA's `TriggerData` (`id`, `idx`, `alias`) and the platform's config.
@@ -72,6 +72,11 @@ enum Kind {
         hours: Vec<u32>,
         minutes: Vec<u32>,
         seconds: Vec<u32>,
+    },
+    Event {
+        event_types: Vec<String>,
+        event_data: Option<Map<String, Value>>,
+        context: Option<Map<String, Value>>,
     },
 }
 
@@ -247,7 +252,29 @@ fn parse_trigger(idx: usize, v: &Value) -> Result<Trigger, String> {
                 seconds: parse_time_expr(sec.as_ref(), 0, 59)?,
             }
         }
-        // shortcut: the other platforms (event, sun…)
+        "event" => {
+            let event_types: Vec<String> =
+                list(m.get("event_type")).iter().map(id_string).collect();
+            if event_types.is_empty() {
+                return Err("required key not provided @ data['event_type']".into());
+            }
+            let event_data = match m.get("event_data") {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(o)) => Some(o.clone()),
+                Some(_) => return Err("event_data: expected a dictionary".into()),
+            };
+            let context = match m.get("context") {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(o)) => Some(o.clone()),
+                Some(_) => return Err("context: expected a dictionary".into()),
+            };
+            Kind::Event {
+                event_types,
+                event_data,
+                context,
+            }
+        }
+        // shortcut: the other platforms (sun…)
         // come with the configs that use them; an automation using one is unavailable.
         other => return Err(format!("trigger platform '{other}' is not supported yet")),
     };
@@ -511,21 +538,31 @@ impl Automations {
 }
 
 /// Arm every automation's triggers (HA does it once started), and listen for the state changes
-/// state triggers wait for. Call after MQTT has started.
+/// and events that triggers wait for. Call after MQTT has started.
 pub fn start(app: &Arc<App>) {
     for a in app.automations.all() {
         arm(app, &a);
     }
     let (mut rx, _) = app.states.subscribe();
+    let mut ev_rx = app.states.subscribe_events();
     let app2 = app.clone();
     tokio::spawn(async move {
         loop {
-            match rx.recv().await {
-                Ok(change) => on_state(&app2, &change),
-                Err(RecvError::Lagged(k)) => {
-                    eprintln!("automation: {k} state changes dropped (too slow)")
-                }
-                Err(RecvError::Closed) => return,
+            tokio::select! {
+                r = rx.recv() => match r {
+                    Ok(change) => on_state(&app2, &change),
+                    Err(RecvError::Lagged(k)) => {
+                        eprintln!("automation: {k} state changes dropped (too slow)")
+                    }
+                    Err(RecvError::Closed) => return,
+                },
+                r = ev_rx.recv() => match r {
+                    Ok(ev) => on_event(&app2, &ev),
+                    Err(RecvError::Lagged(k)) => {
+                        eprintln!("automation: {k} events dropped (too slow)")
+                    }
+                    Err(RecvError::Closed) => return,
+                },
             }
         }
     });
@@ -599,7 +636,7 @@ fn arm(app: &Arc<App>, a: &Arc<Automation>) {
             continue;
         }
         match &t.kind {
-            Kind::State { .. } | Kind::HomeAssistant { .. } => {}
+            Kind::State { .. } | Kind::HomeAssistant { .. } | Kind::Event { .. } => {}
             Kind::NumericState {
                 entity_ids,
                 above,
@@ -743,6 +780,65 @@ fn fire(
     };
     let (app, a) = (app.clone(), a.clone());
     tokio::spawn(async move { trigger(&app, &a, run_vars, ctx.as_ref(), false).await });
+}
+
+struct StateMatch<'a> {
+    data: Map<String, Value>,
+    old: Value,
+    new: Value,
+    attribute: Option<String>,
+    keep_from: bool,
+    for_: &'a Option<Value>,
+}
+
+/// Match a `state` trigger against a state change.
+fn match_state<'a>(t: &'a Trigger, change: &Change) -> Option<StateMatch<'a>> {
+    let Kind::State {
+        entity_ids,
+        from,
+        to,
+        match_all,
+        attribute,
+        for_,
+        keep_from,
+    } = &t.kind
+    else {
+        return None;
+    };
+    if !entity_ids.iter().any(|e| **e == *change.entity_id) {
+        return None;
+    }
+    let value = |s: &Option<Arc<crate::state::State>>| match (s, attribute) {
+        (None, _) => Value::Null,
+        (Some(s), None) => Value::String(s.state.clone()),
+        (Some(s), Some(a)) => s.attributes.get(a).cloned().unwrap_or(Value::Null),
+    };
+    let (old, new) = (value(&change.old), value(&change.new));
+    if attribute.is_some() && old == new {
+        return None;
+    }
+    if !from.test(&old) || !to.test(&new) || (!match_all && old == new) {
+        return None;
+    }
+    let json = |s: &Option<Arc<crate::state::State>>| s.as_ref().map(|s| s.json());
+    let mut data = t.data("state");
+    data.insert("entity_id".into(), (*change.entity_id).into());
+    data.insert("from_state".into(), json(&change.old).into());
+    data.insert("to_state".into(), json(&change.new).into());
+    data.insert("for".into(), Value::Null);
+    data.insert("attribute".into(), attribute.clone().into());
+    data.insert(
+        "description".into(),
+        format!("state of {}", change.entity_id).into(),
+    );
+    Some(StateMatch {
+        data,
+        old,
+        new,
+        attribute: attribute.clone(),
+        keep_from: *keep_from,
+        for_,
+    })
 }
 
 /// HA's `state_automation_listener`, for every automation's state, numeric_state, and template triggers.
@@ -1213,9 +1309,83 @@ fn on_template_trigger(
     }
 }
 
-/// HA's `mqtt_automation_listener`.
-fn on_mqtt(app: &Arc<App>, a: &Arc<Automation>, ti: usize, msg: &crate::mqtt::Message) {
-    let t = &a.triggers[ti];
+/// Match an `event` trigger against a fired event.
+fn match_event(
+    t: &Trigger,
+    ev: &Event,
+    states: &Arc<States>,
+    scope: &Map<String, Value>,
+) -> Option<Map<String, Value>> {
+    let Kind::Event {
+        event_types,
+        event_data,
+        context,
+    } = &t.kind
+    else {
+        return None;
+    };
+    let type_matched = event_types.iter().any(|et| {
+        if template::is_static(et) {
+            et == &ev.event_type
+        } else {
+            render_complex(states, &Value::String(et.clone()), scope)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .is_some_and(|s| s == ev.event_type)
+        }
+    });
+    if !type_matched {
+        return None;
+    }
+    if let Some(expected) = event_data {
+        for (k, v) in expected {
+            let want = render_complex(states, v, scope).ok()?;
+            if ev.data.get(k) != Some(&want) {
+                return None;
+            }
+        }
+    }
+    if let Some(expected_ctx) = context {
+        let ev_ctx = ev.context.json();
+        for (k, v) in expected_ctx {
+            let want = render_complex(states, v, scope).ok()?;
+            if ev_ctx.get(k) != Some(&want) {
+                return None;
+            }
+        }
+    }
+    let mut data = t.data("event");
+    data.insert("event".into(), ev.json());
+    data.insert(
+        "description".into(),
+        format!("event '{}'", ev.event_type).into(),
+    );
+    Some(data)
+}
+
+/// HA's `event_automation_listener`, for every automation's event triggers.
+fn on_event(app: &Arc<App>, ev: &Event) {
+    for a in app.automations.all() {
+        if !a.entity.available() || !a.entity.enabled() {
+            continue;
+        }
+        let scope = attach_vars(app, &a);
+        for t in &a.triggers {
+            if let Some(data) = match_event(t, ev, &app.states, &scope) {
+                fire(app, &a, t, data, Some(ev.context.clone()));
+            }
+        }
+    }
+}
+
+/// Match an `mqtt` trigger against a received message.
+fn match_mqtt(
+    t: &Trigger,
+    msg: &crate::mqtt::Message,
+    states: &Arc<States>,
+    scope: &Map<String, Value>,
+    on_err: &dyn Fn(&str),
+) -> Option<Map<String, Value>> {
     let Kind::Mqtt {
         topic,
         payload,
@@ -1223,22 +1393,23 @@ fn on_mqtt(app: &Arc<App>, a: &Arc<Automation>, ti: usize, msg: &crate::mqtt::Me
         ..
     } = &t.kind
     else {
-        return;
+        return None;
     };
     if !topic_matches(topic, &msg.topic) {
-        return;
+        return None;
     }
     let json_payload = serde_json::from_str::<Value>(&msg.payload).ok();
     if let Some(wanted) = payload {
         // The wanted payload is a template rendered with the attach variables.
         let wanted = match template::is_static(wanted) {
             true => wanted.clone(),
-            false => {
-                match template::render(&app.states, wanted, &attach_vars(app, a).into(), false) {
-                    Ok((s, _)) => s,
-                    Err(e) => return a.entity.log("ERROR", &format!("payload template: {e}")),
+            false => match template::render(states, wanted, &Value::Object(scope.clone()), false) {
+                Ok((s, _)) => s,
+                Err(e) => {
+                    on_err(&format!("payload template: {e}"));
+                    return None;
                 }
-            }
+            },
         };
         let got = match value_template {
             None => msg.payload.clone(),
@@ -1247,14 +1418,17 @@ fn on_mqtt(app: &Arc<App>, a: &Arc<Automation>, ti: usize, msg: &crate::mqtt::Me
                 if let Some(j) = &json_payload {
                     vars["value_json"] = j.clone();
                 }
-                match template::render(&app.states, vt, &vars, false) {
+                match template::render(states, vt, &vars, false) {
                     Ok((s, _)) => s,
-                    Err(e) => return a.entity.log("ERROR", &format!("value_template: {e}")),
+                    Err(e) => {
+                        on_err(&format!("value_template: {e}"));
+                        return None;
+                    }
                 }
             }
         };
         if got.is_empty() || got != wanted {
-            return;
+            return None;
         }
     }
     let mut data = t.data("mqtt");
@@ -1268,7 +1442,266 @@ fn on_mqtt(app: &Arc<App>, a: &Arc<Automation>, ti: usize, msg: &crate::mqtt::Me
     if let Some(j) = json_payload {
         data.insert("payload_json".into(), j);
     }
-    fire(app, a, t, data, None);
+    Some(data)
+}
+
+/// HA's `mqtt_automation_listener`.
+fn on_mqtt(app: &Arc<App>, a: &Arc<Automation>, ti: usize, msg: &crate::mqtt::Message) {
+    let t = &a.triggers[ti];
+    if let Some(data) = match_mqtt(t, msg, &app.states, &attach_vars(app, a), &|e| {
+        a.entity.log("ERROR", e)
+    }) {
+        fire(app, a, t, data, None);
+    }
+}
+
+/// Parsed triggers for `wait_for_trigger`.
+#[derive(Debug)]
+pub(crate) struct ParsedTriggers(Arc<Vec<Trigger>>);
+
+pub(crate) fn parse_triggers(v: &Value) -> Result<ParsedTriggers, String> {
+    let items = list(Some(v));
+    if items.is_empty() {
+        return Err("wait_for_trigger: expected at least one trigger".into());
+    }
+    let triggers = items
+        .iter()
+        .enumerate()
+        .map(|(i, t)| parse_trigger(i, t))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ParsedTriggers(Arc::new(triggers)))
+}
+
+/// Wait until any trigger in `triggers` fires, `stop` is signalled, or `timeout` elapses.
+pub(crate) async fn wait_for_triggers(
+    app: &Arc<App>,
+    triggers: &ParsedTriggers,
+    vars: &Map<String, Value>,
+    stop: &mut tokio::sync::watch::Receiver<bool>,
+    timeout: Option<Duration>,
+) -> Result<Option<(Map<String, Value>, Context)>, Halt> {
+    let (hit_tx, mut hit_rx) =
+        tokio::sync::mpsc::unbounded_channel::<(Map<String, Value>, Context)>();
+    let mut set = tokio::task::JoinSet::new();
+    let has_state = triggers
+        .0
+        .iter()
+        .any(|t| matches!(t.kind, Kind::State { .. }));
+    let has_event = triggers
+        .0
+        .iter()
+        .any(|t| matches!(t.kind, Kind::Event { .. }));
+    if has_state {
+        let (mut rx, _) = app.states.subscribe();
+        let (app2, trigs, vars2, tx) = (
+            app.clone(),
+            triggers.0.clone(),
+            vars.clone(),
+            hit_tx.clone(),
+        );
+        set.spawn(async move {
+            let mut pending: HashMap<(usize, String), AbortHandle> = HashMap::new();
+            loop {
+                let change = match rx.recv().await {
+                    Ok(c) => c,
+                    Err(RecvError::Closed) => break,
+                    Err(RecvError::Lagged(_)) => continue,
+                };
+                for t in trigs.iter() {
+                    let Some(StateMatch {
+                        mut data,
+                        old,
+                        new,
+                        attribute,
+                        keep_from,
+                        for_,
+                    }) = match_state(t, &change)
+                    else {
+                        continue;
+                    };
+                    let Some(for_) = for_ else {
+                        let _ = tx.send((data, change.context.clone()));
+                        return;
+                    };
+                    let mut scope = vars2.clone();
+                    scope.insert(
+                        "trigger".into(),
+                        json!({"platform": "state", "entity_id": &*change.entity_id,
+                            "from_state": data["from_state"], "to_state": data["to_state"]}),
+                    );
+                    let Ok(secs) =
+                        render_complex(&app2.states, for_, &scope).and_then(|v| time_period(&v))
+                    else {
+                        continue;
+                    };
+                    data.insert(
+                        "for".into(),
+                        json!({"__type": "<class 'datetime.timedelta'>", "total_seconds": secs}),
+                    );
+                    let same = {
+                        let attribute = attribute.clone();
+                        move |s: &crate::state::State| {
+                            let cur = match &attribute {
+                                None => Value::String(s.state.clone()),
+                                Some(a) => s.attributes.get(a).cloned().unwrap_or(Value::Null),
+                            };
+                            if keep_from { cur != old } else { cur == new }
+                        }
+                    };
+                    let (mut rx2, _) = app2.states.subscribe();
+                    let (entity, ctx, tx2) =
+                        (change.entity_id.clone(), change.context.clone(), tx.clone());
+                    let handle = tokio::spawn(async move {
+                        let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(secs);
+                        loop {
+                            tokio::select! {
+                                _ = tokio::time::sleep_until(deadline) => break,
+                                r = rx2.recv() => match r {
+                                    Ok(c) if c.entity_id == entity => {
+                                        if !c.new.as_deref().is_some_and(&same) {
+                                            return;
+                                        }
+                                    }
+                                    Err(RecvError::Closed) => return,
+                                    _ => {}
+                                },
+                            }
+                        }
+                        let _ = tx2.send((data, ctx));
+                    });
+                    if let Some(old_h) =
+                        pending.insert((t.idx, change.entity_id.to_string()), handle.abort_handle())
+                    {
+                        old_h.abort();
+                    }
+                }
+            }
+        });
+    }
+    if has_event {
+        let mut ev_rx = app.states.subscribe_events();
+        let (states, trigs, vars2, tx) = (
+            app.states.clone(),
+            triggers.0.clone(),
+            vars.clone(),
+            hit_tx.clone(),
+        );
+        set.spawn(async move {
+            loop {
+                let ev = match ev_rx.recv().await {
+                    Ok(e) => e,
+                    Err(RecvError::Closed) => break,
+                    Err(RecvError::Lagged(_)) => continue,
+                };
+                for t in trigs.iter() {
+                    if let Some(data) = match_event(t, &ev, &states, &vars2) {
+                        let _ = tx.send((data, ev.context.clone()));
+                        return;
+                    }
+                }
+            }
+        });
+    }
+    for (ti, t) in triggers.0.iter().enumerate() {
+        match &t.kind {
+            Kind::Mqtt { topic, qos, .. } => {
+                let Some(mqtt) = app.mqtt.get() else {
+                    continue;
+                };
+                let mut rx = mqtt.subscribe_for(topic, *qos);
+                let (states, trigs, vars2, tx) = (
+                    app.states.clone(),
+                    triggers.0.clone(),
+                    vars.clone(),
+                    hit_tx.clone(),
+                );
+                set.spawn(async move {
+                    loop {
+                        let msg = match rx.recv().await {
+                            Ok(m) => m,
+                            Err(RecvError::Closed) => break,
+                            Err(RecvError::Lagged(_)) => continue,
+                        };
+                        if let Some(data) = match_mqtt(&trigs[ti], &msg, &states, &vars2, &|_| {}) {
+                            let _ = tx.send((data, Context::new(None)));
+                            return;
+                        }
+                    }
+                });
+            }
+            Kind::Time { at, weekdays } => {
+                for &at in at {
+                    let (app2, trigs, weekdays, tx) = (
+                        app.clone(),
+                        triggers.0.clone(),
+                        weekdays.clone(),
+                        hit_tx.clone(),
+                    );
+                    set.spawn(async move {
+                        let tz = &app2.config.core.tz;
+                        let mut after = Utc::now();
+                        loop {
+                            let next = next_time(tz, Utc::now().max(after), at);
+                            let left = (next - Utc::now()).to_std().unwrap_or_default();
+                            if left > Duration::from_secs(60) {
+                                tokio::time::sleep(Duration::from_secs(60)).await;
+                                continue;
+                            }
+                            tokio::time::sleep(left).await;
+                            after = next;
+                            let local = next + tz.offset(next);
+                            if let Some(days) = &weekdays
+                                && !days.iter().any(|d| {
+                                    *d == WEEKDAYS[local.weekday().num_days_from_monday() as usize]
+                                })
+                            {
+                                continue;
+                            }
+                            let mut data = trigs[ti].data("time");
+                            data.insert(
+                                "now".into(),
+                                Utc::now()
+                                    .with_timezone(&tz.offset(Utc::now()))
+                                    .format("%Y-%m-%dT%H:%M:%S%.6f%:z")
+                                    .to_string()
+                                    .into(),
+                            );
+                            data.insert("description".into(), "time".into());
+                            data.insert("entity_id".into(), Value::Null);
+                            let _ = tx.send((data, Context::new(None)));
+                            return;
+                        }
+                    });
+                }
+            }
+            Kind::State { .. }
+            | Kind::Event { .. }
+            | Kind::NumericState { .. }
+            | Kind::Template { .. }
+            | Kind::HomeAssistant { .. }
+            | Kind::TimePattern { .. } => {}
+        }
+    }
+    let deadline = timeout.map(|d| tokio::time::Instant::now() + d);
+    tokio::select! {
+        hit = hit_rx.recv() => {
+            drop(set);
+            Ok(hit)
+        }
+        _ = stop.wait_for(|s| *s) => {
+            drop(set);
+            Err(Halt::Cancelled)
+        }
+        _ = async {
+            match deadline {
+                Some(d) => tokio::time::sleep_until(d).await,
+                None => std::future::pending::<()>().await,
+            }
+        } => {
+            drop(set);
+            Ok(None)
+        }
+    }
 }
 
 /// The first instant after `after` whose wall-clock time in `tz` is `at`.

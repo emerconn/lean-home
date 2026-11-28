@@ -211,3 +211,15 @@ bounds, overnight wrap). Checked against real HA 2026.11.2 via
 `compat/fixtures/step2/pr2-triggers-conditions.json` (`compat/record-pr2.py`) in `automation.rs`
 and `condition.rs` unit tests. Binary size and memory measurements were not taken separately for
 this change.
+
+## Actions and event bus
+
+(Done: `state.rs`, `ws.rs`, `automation.rs`, `script.rs`.) Added a general `Event` bus
+(`States::fire_event`, `States::subscribe_events`) wired into WebSocket `subscribe_events` and
+`fire_event`, the `event` trigger (`event_type`, `event_data`, `context`) and shared
+`wait_for_triggers` in `automation.rs`, and the `event`, `sequence`, `parallel`, `repeat` (`count`,
+`for_each`, `while`, `until`), `wait_template`, and `wait_for_trigger` actions in `script.rs`
+with `ScriptTrace` recording. Checked against real HA 2026.11.2 via
+`compat/fixtures/step2/pr3-actions-events.json` (`compat/record-pr3.py`) in `script.rs`
+(`pr3_actions_and_events_replay_like_ha`). Binary size and memory measurements were not taken
+separately for this change.

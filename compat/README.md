@@ -125,3 +125,10 @@ checks it per message against the recording and exits non-zero on any difference
 (set-ordered data in HA, the demo entities, unimplemented commands) are listed in the script. CI
 runs all three scenarios (`.github/workflows/compat.yaml`). Locally, set `FRONTEND` to a
 `hass_frontend` dir and `CHROMIUM` if Chromium isn't at `/usr/bin/chromium`.
+
+## Step 2 action & event recording
+
+`fixtures/step2/pr3-actions-events.json` is recorded from `HA_IMAGE` with `compat/record-pr3.py`:
+it captures `event` triggers and `event` actions, `repeat` (`count`, `for_each`, `while`,
+`until`), `sequence`, `parallel`, `wait_template` (immediate, timeout continue/abort), and
+`wait_for_trigger` (matched, timeout). `script.rs` replays it in `pr3_actions_and_events_replay_like_ha`.

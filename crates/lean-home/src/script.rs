@@ -61,6 +61,34 @@ enum Action {
         message: String,
         error: bool,
     },
+    Event {
+        event: String,
+        data: Value,
+    },
+    Sequence(Seq),
+    Parallel(Vec<Seq>),
+    Repeat {
+        kind: RepeatKind,
+        sequence: Seq,
+    },
+    WaitTemplate {
+        template: String,
+        timeout: Option<Value>,
+        continue_on_timeout: bool,
+    },
+    WaitForTrigger {
+        triggers: crate::automation::ParsedTriggers,
+        timeout: Option<Value>,
+        continue_on_timeout: bool,
+    },
+}
+
+#[derive(Debug)]
+enum RepeatKind {
+    Count(Value),
+    ForEach(Value),
+    While(Vec<Condition>),
+    Until(Vec<Condition>),
 }
 
 fn parse_conditions(v: Option<&Value>) -> Result<Vec<Condition>, String> {
@@ -143,10 +171,67 @@ fn parse_step(v: &Value) -> Result<Step, String> {
             message: stop.as_str().unwrap_or_default().into(),
             error: m.get("error").and_then(Value::as_bool).unwrap_or(false),
         }
+    } else if let Some(ev) = m.get("event") {
+        let mut data = m.get("event_data").cloned().unwrap_or_else(|| json!({}));
+        if let (Some(d), Some(Value::Object(extra))) =
+            (data.as_object_mut(), m.get("event_data_template"))
+        {
+            d.extend(extra.clone());
+        }
+        Action::Event {
+            event: ev.as_str().ok_or("event: expected a string")?.into(),
+            data,
+        }
+    } else if let Some(seq) = m.get("sequence") {
+        Action::Sequence(parse_sequence(seq)?)
+    } else if let Some(par) = m.get("parallel") {
+        let branches = match par {
+            Value::Array(a) => a
+                .iter()
+                .map(parse_sequence)
+                .collect::<Result<Vec<_>, _>>()?,
+            single => vec![parse_sequence(single)?],
+        };
+        Action::Parallel(branches)
+    } else if let Some(rep) = m.get("repeat") {
+        let rm = rep.as_object().ok_or("repeat: expected a dictionary")?;
+        let sequence = parse_sequence(rm.get("sequence").unwrap_or(&Value::Null))?;
+        let kind = if let Some(c) = rm.get("count") {
+            RepeatKind::Count(c.clone())
+        } else if let Some(f) = rm.get("for_each") {
+            RepeatKind::ForEach(f.clone())
+        } else if let Some(w) = rm.get("while") {
+            RepeatKind::While(parse_conditions(Some(w))?)
+        } else if let Some(u) = rm.get("until") {
+            RepeatKind::Until(parse_conditions(Some(u))?)
+        } else {
+            return Err("repeat: expected count, for_each, while, or until".into());
+        };
+        Action::Repeat { kind, sequence }
+    } else if let Some(wt) = m.get("wait_template") {
+        Action::WaitTemplate {
+            template: wt
+                .as_str()
+                .ok_or("wait_template: expected a string")?
+                .into(),
+            timeout: m.get("timeout").cloned(),
+            continue_on_timeout: m
+                .get("continue_on_timeout")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        }
+    } else if let Some(wft) = m.get("wait_for_trigger") {
+        Action::WaitForTrigger {
+            triggers: crate::automation::parse_triggers(wft)?,
+            timeout: m.get("timeout").cloned(),
+            continue_on_timeout: m
+                .get("continue_on_timeout")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        }
     } else {
-        // shortcut: wait_template, wait_for_trigger, repeat, parallel, sequence, event, scene
-        // and device actions aren't implemented; a script using one is unavailable, as HA
-        // marks an invalid script.
+        // shortcut: scene and device actions aren't implemented; a script using one is
+        // unavailable, as HA marks an invalid script.
         let keys: Vec<&str> = m.keys().map(String::as_str).collect();
         return Err(format!("unsupported action: {}", keys.join(", ")));
     };
@@ -974,7 +1059,7 @@ pub(crate) fn launch(
 
 /// Why a sequence stopped before its end.
 #[derive(Debug)]
-enum Halt {
+pub(crate) enum Halt {
     /// A `stop` action: the run finished.
     Stop,
     /// A `stop` with `error: true`.
@@ -1298,6 +1383,300 @@ impl Run {
                     Err(Halt::Stop)
                 }
             }
+            Action::Event { event, data } => {
+                let ev_type = match render(&Value::String(event.clone()), vars)? {
+                    Value::String(s) => s,
+                    other => other.to_string(),
+                };
+                self.step_log(step, format!("fire event {ev_type}"));
+                let data_map = render(data, vars)?
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| Halt::Error("event_data must be a dictionary".into()))?;
+                self.trace
+                    .set_result(el, json!({"event": ev_type, "event_data": data_map}));
+                self.app
+                    .states
+                    .fire_event(ev_type, data_map, self.ctx.clone());
+                Ok(())
+            }
+            Action::Sequence(seq) => {
+                self.run_sub(seq.clone(), format!("{path}/sequence"), vars)
+                    .await
+            }
+            Action::Parallel(branches) => {
+                let mut set = tokio::task::JoinSet::new();
+                for (idx, seq) in branches.iter().enumerate() {
+                    let mut branch_run = Run {
+                        app: self.app.clone(),
+                        entity: self.entity.clone(),
+                        ctx: self.ctx.clone(),
+                        trace: self.trace.clone(),
+                        stop: self.stop.clone(),
+                        stack: self.stack.clone(),
+                        levels: vec![],
+                    };
+                    let seq = seq.clone();
+                    let base = format!("{path}/parallel/{idx}");
+                    let mut branch_vars = vars.clone();
+                    set.spawn(async move {
+                        let r = branch_run.run_sequence(seq, base, &mut branch_vars).await;
+                        match r {
+                            Err(Halt::ConditionFail) => Ok(()),
+                            other => other,
+                        }
+                    });
+                }
+                while let Some(res) = set.join_next().await {
+                    match res {
+                        Ok(Ok(())) => {}
+                        Ok(Err(halt)) => {
+                            set.abort_all();
+                            return Err(halt);
+                        }
+                        Err(e) => {
+                            set.abort_all();
+                            return Err(Halt::Error(format!("parallel task failed: {e}")));
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Action::Repeat { kind, sequence } => {
+                let prev = vars.get("repeat").cloned();
+                let res = self.exec_repeat(kind, sequence, path, vars).await;
+                match prev {
+                    Some(v) => {
+                        vars.insert("repeat".into(), v);
+                    }
+                    None => {
+                        vars.remove("repeat");
+                    }
+                }
+                res
+            }
+            Action::WaitTemplate {
+                template: tpl,
+                timeout,
+                continue_on_timeout,
+            } => {
+                let timeout_secs = match timeout {
+                    Some(t) => Some(time_period(&render(t, vars)?).map_err(Halt::Error)?),
+                    None => None,
+                };
+                let deadline =
+                    timeout_secs.map(|s| tokio::time::Instant::now() + Duration::from_secs_f64(s));
+                let (mut rx, _) = self.app.states.subscribe();
+                let eval =
+                    |states: &Arc<States>, vars: &Map<String, Value>| -> Result<bool, Halt> {
+                        let (text, _) =
+                            template::render(states, tpl, &Value::Object(vars.clone()), false)
+                                .map_err(Halt::Error)?;
+                        Ok(text.trim().eq_ignore_ascii_case("true"))
+                    };
+                if eval(&self.app.states, vars)? {
+                    let remaining = deadline.map(|d| {
+                        d.saturating_duration_since(tokio::time::Instant::now())
+                            .as_secs_f64()
+                    });
+                    let wait_val = json!({"remaining": remaining, "completed": true});
+                    vars.insert("wait".into(), wait_val.clone());
+                    self.trace.set_result(el, json!({"wait": wait_val}));
+                    return Ok(());
+                }
+                let mut stop = self.stop.clone();
+                loop {
+                    tokio::select! {
+                        _ = stop.wait_for(|s| *s) => return Err(Halt::Cancelled),
+                        _ = async {
+                            match deadline {
+                                Some(d) => tokio::time::sleep_until(d).await,
+                                None => std::future::pending::<()>().await,
+                            }
+                        } => {
+                            let wait_val = json!({"remaining": 0.0, "completed": false});
+                            vars.insert("wait".into(), wait_val.clone());
+                            self.trace.set_result(el, json!({"wait": wait_val}));
+                            return if *continue_on_timeout { Ok(()) } else { Err(Halt::Stop) };
+                        }
+                        r = rx.recv() => match r {
+                            Ok(_) => {
+                                if eval(&self.app.states, vars)? {
+                                    let remaining = deadline.map(|d| {
+                                        d.saturating_duration_since(tokio::time::Instant::now())
+                                            .as_secs_f64()
+                                    });
+                                    let wait_val = json!({"remaining": remaining, "completed": true});
+                                    vars.insert("wait".into(), wait_val.clone());
+                                    self.trace.set_result(el, json!({"wait": wait_val}));
+                                    return Ok(());
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                return Err(Halt::Cancelled);
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        }
+                    }
+                }
+            }
+            Action::WaitForTrigger {
+                triggers,
+                timeout,
+                continue_on_timeout,
+            } => {
+                let timeout_dur = match timeout {
+                    Some(t) => Some(Duration::from_secs_f64(
+                        time_period(&render(t, vars)?).map_err(Halt::Error)?,
+                    )),
+                    None => None,
+                };
+                let start = tokio::time::Instant::now();
+                let mut stop = self.stop.clone();
+                match crate::automation::wait_for_triggers(
+                    &self.app,
+                    triggers,
+                    vars,
+                    &mut stop,
+                    timeout_dur,
+                )
+                .await?
+                {
+                    Some((trig_data, _ctx)) => {
+                        let remaining =
+                            timeout_dur.map(|d| d.saturating_sub(start.elapsed()).as_secs_f64());
+                        let wait_val = json!({"remaining": remaining, "completed": true, "trigger": trig_data});
+                        vars.insert("wait".into(), wait_val.clone());
+                        self.trace.set_result(el, json!({"wait": wait_val}));
+                        Ok(())
+                    }
+                    None => {
+                        let wait_val =
+                            json!({"remaining": 0.0, "completed": false, "trigger": Value::Null});
+                        vars.insert("wait".into(), wait_val.clone());
+                        self.trace.set_result(el, json!({"wait": wait_val}));
+                        if *continue_on_timeout {
+                            Ok(())
+                        } else {
+                            Err(Halt::Stop)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn run_repeat_iter(
+        &mut self,
+        seq: Seq,
+        base: String,
+        vars: &mut Map<String, Value>,
+    ) -> Result<(), Halt> {
+        self.levels.push(None);
+        self.changed();
+        let r = self.run_sequence(seq, base, vars).await;
+        self.levels.pop();
+        match r {
+            Err(Halt::ConditionFail) => Ok(()),
+            other => other,
+        }
+    }
+
+    async fn exec_repeat(
+        &mut self,
+        kind: &RepeatKind,
+        sequence: &Seq,
+        path: &str,
+        vars: &mut Map<String, Value>,
+    ) -> Result<(), Halt> {
+        let base = format!("{path}/repeat/sequence");
+        match kind {
+            RepeatKind::Count(v) => {
+                let rendered = render_complex(&self.app.states, v, vars).map_err(Halt::Error)?;
+                let count = rendered
+                    .as_u64()
+                    .or_else(|| rendered.as_f64().map(|f| f as u64))
+                    .or_else(|| rendered.as_str().and_then(|s| s.trim().parse().ok()))
+                    .ok_or_else(|| {
+                        Halt::Error(format!("repeat count: expected integer, got {rendered}"))
+                    })?;
+                for idx in 1..=count {
+                    if self.stopped() {
+                        return Err(Halt::Cancelled);
+                    }
+                    vars.insert(
+                        "repeat".into(),
+                        json!({"first": idx == 1, "index": idx, "last": idx == count}),
+                    );
+                    self.run_repeat_iter(sequence.clone(), base.clone(), vars)
+                        .await?;
+                }
+                Ok(())
+            }
+            RepeatKind::ForEach(v) => {
+                let rendered = render_complex(&self.app.states, v, vars).map_err(Halt::Error)?;
+                let items = rendered.as_array().cloned().ok_or_else(|| {
+                    Halt::Error(format!("repeat for_each: expected list, got {rendered}"))
+                })?;
+                let total = items.len();
+                for (i, item) in items.into_iter().enumerate() {
+                    if self.stopped() {
+                        return Err(Halt::Cancelled);
+                    }
+                    let idx = i + 1;
+                    vars.insert(
+                        "repeat".into(),
+                        json!({"first": idx == 1, "index": idx, "last": idx == total, "item": item}),
+                    );
+                    self.run_repeat_iter(sequence.clone(), base.clone(), vars)
+                        .await?;
+                }
+                Ok(())
+            }
+            RepeatKind::While(conds) => {
+                let mut idx = 1u64;
+                loop {
+                    if self.stopped() {
+                        return Err(Halt::Cancelled);
+                    }
+                    vars.insert("repeat".into(), json!({"first": idx == 1, "index": idx}));
+                    if self.test_conditions(
+                        conds,
+                        &format!("{path}/repeat/while"),
+                        "condition",
+                        vars,
+                    ) != Some(true)
+                    {
+                        break;
+                    }
+                    self.run_repeat_iter(sequence.clone(), base.clone(), vars)
+                        .await?;
+                    idx += 1;
+                }
+                Ok(())
+            }
+            RepeatKind::Until(conds) => {
+                let mut idx = 1u64;
+                loop {
+                    if self.stopped() {
+                        return Err(Halt::Cancelled);
+                    }
+                    vars.insert("repeat".into(), json!({"first": idx == 1, "index": idx}));
+                    self.run_repeat_iter(sequence.clone(), base.clone(), vars)
+                        .await?;
+                    if self.test_conditions(
+                        conds,
+                        &format!("{path}/repeat/until"),
+                        "condition",
+                        vars,
+                    ) == Some(true)
+                    {
+                        break;
+                    }
+                    idx += 1;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1312,6 +1691,12 @@ impl Step {
             Action::Condition { .. } => "condition",
             Action::Variables(_) => "variables",
             Action::Stop { .. } => "stop",
+            Action::Event { .. } => "event",
+            Action::Sequence(_) => "sequence",
+            Action::Parallel(_) => "parallel",
+            Action::Repeat { .. } => "repeat",
+            Action::WaitTemplate { .. } => "wait_template",
+            Action::WaitForTrigger { .. } => "wait_for_trigger",
         }
     }
 }
@@ -1585,10 +1970,184 @@ pub(crate) mod tests {
     fn unsupported_actions_make_the_script_unavailable() {
         let reg = crate::registry::Registry::default();
         let states = States::default();
-        let cfg = json!({"bad": {"sequence": [{"wait_template": "{{ true }}"}]}});
+        let cfg = json!({"bad": {"sequence": [{"scene": "scene.living_room"}]}});
         let restore = crate::restore::Restore::load(std::path::Path::new("/nonexistent"));
         let scripts = Scripts::load(cfg.as_object().unwrap(), &reg, &states, &restore);
         assert_eq!(states.get("script.bad").unwrap().state, "unavailable");
         assert!(scripts.describe().get("bad").is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pr3_actions_and_events_replay_like_ha() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../compat/fixtures/step2/pr3-actions-events.json"
+        ))
+        .unwrap();
+
+        let dir = crate::e2e_tests::fixture_dir();
+        let cfg = dir.join("config");
+        let mut scripts_map = Map::new();
+        for s in fixture["scripts"].as_array().unwrap() {
+            let name = s["name"].as_str().unwrap();
+            scripts_map.insert(name.into(), s["trace"]["extended_dict"]["config"].clone());
+        }
+        std::fs::write(
+            cfg.join("scripts.yaml"),
+            serde_json::to_string(&scripts_map).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            cfg.join("automations.yaml"),
+            serde_json::to_string(&json!([{
+                "id": "ev_test",
+                "alias": "Event trigger test",
+                "triggers": [{"platform": "event", "event_type": "custom_test_event", "event_data": {"kind": "ping"}}],
+                "actions": [{"event": "automation_fired", "event_data": {"trig_platform": "{{ trigger.platform }}", "trig_n": "{{ trigger.event.data.n }}"}}]
+            }]))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            cfg.join("configuration.yaml"),
+            "script: !include scripts.yaml\nautomation: !include automations.yaml\n",
+        )
+        .unwrap();
+        let app = Arc::new(App::load(&cfg, &dir.join("frontend"), false).unwrap());
+        crate::automation::start(&app);
+        tokio::task::yield_now().await;
+
+        let mut ev_rx = app.states.subscribe_events();
+        let mut collected_events: Vec<Value> = vec![];
+        fn drain_events(
+            rx: &mut tokio::sync::broadcast::Receiver<Arc<crate::state::Event>>,
+            out: &mut Vec<Value>,
+        ) {
+            while let Ok(ev) = rx.try_recv() {
+                out.push(json!({
+                    "event_type": ev.event_type,
+                    "data": ev.data,
+                    "origin": ev.origin,
+                }));
+            }
+        }
+
+        // 1. event_action + event trigger
+        dispatch(
+            &app,
+            "script",
+            "event_action",
+            json!({}),
+            json!({}),
+            Context::new(None),
+            vec![],
+        )
+        .await
+        .unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        drain_events(&mut ev_rx, &mut collected_events);
+        assert!(collected_events.iter().any(|e| {
+            e["event_type"] == "automation_fired"
+                && e["data"] == json!({"trig_platform": "event", "trig_n": 2})
+        }));
+
+        // 2. repeat_variants
+        app.states
+            .set("sensor.counter", "0", Map::new(), Context::new(None));
+        dispatch(
+            &app,
+            "script",
+            "repeat_variants",
+            json!({}),
+            json!({}),
+            Context::new(None),
+            vec![],
+        )
+        .await
+        .unwrap();
+        drain_events(&mut ev_rx, &mut collected_events);
+
+        // 3. sequence_and_parallel
+        dispatch(
+            &app,
+            "script",
+            "sequence_and_parallel",
+            json!({}),
+            json!({}),
+            Context::new(None),
+            vec![],
+        )
+        .await
+        .unwrap();
+        drain_events(&mut ev_rx, &mut collected_events);
+
+        // 4. wait_template (immediate, timeout continue, timeout abort)
+        app.states
+            .set("binary_sensor.door", "off", Map::new(), Context::new(None));
+        for name in [
+            "wait_template_immediate",
+            "wait_template_timeout_continue",
+            "wait_template_timeout_abort",
+        ] {
+            dispatch(
+                &app,
+                "script",
+                name,
+                json!({}),
+                json!({}),
+                Context::new(None),
+                vec![],
+            )
+            .await
+            .unwrap();
+        }
+        drain_events(&mut ev_rx, &mut collected_events);
+
+        // 5. wait_for_trigger (matched + timeout)
+        let app2 = app.clone();
+        let door_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            app2.states
+                .set("binary_sensor.door", "on", Map::new(), Context::new(None));
+        });
+        dispatch(
+            &app,
+            "script",
+            "wait_for_trigger_matched",
+            json!({}),
+            json!({}),
+            Context::new(None),
+            vec![],
+        )
+        .await
+        .unwrap();
+        door_task.await.unwrap();
+
+        dispatch(
+            &app,
+            "script",
+            "wait_for_trigger_timeout",
+            json!({}),
+            json!({}),
+            Context::new(None),
+            vec![],
+        )
+        .await
+        .unwrap();
+        drain_events(&mut ev_rx, &mut collected_events);
+
+        // Verify all recorded events from HA's fixture match (ignoring automation_fired).
+        for want in fixture["recorded_events"].as_array().unwrap() {
+            assert!(
+                collected_events.contains(want),
+                "missing recorded event {want} in {collected_events:?}"
+            );
+        }
+        // Verify wait_template_timeout_abort did NOT emit should_not_run.
+        assert!(
+            !collected_events
+                .iter()
+                .any(|e| e["data"].get("should_not_run").is_some())
+        );
     }
 }
