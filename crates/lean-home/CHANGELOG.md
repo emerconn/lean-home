@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1](https://github.com/emerconn/lean-home/compare/v0.0.0...v0.0.1) - 2026-11-28
+
+### Added
+
+- add sun trigger and sun condition matching astral 2.2 ([#55](https://github.com/emerconn/lean-home/pull/55))
+- add blueprint loading and use_blueprint expansion ([#54](https://github.com/emerconn/lean-home/pull/54))
+- add event bus, event trigger, and repeat/sequence/parallel/wait actions ([#53](https://github.com/emerconn/lean-home/pull/53))
+- add numeric_state, time_pattern, homeassistant, template triggers and time condition ([#52](https://github.com/emerconn/lean-home/pull/52))
+- add timedelta template helpers and state last_reported ([#51](https://github.com/emerconn/lean-home/pull/51))
+
 ## [0.0.0](https://github.com/emerconn/lean-home/releases/tag/v0.0.0) - 2026-11-26
 
 ### Added
