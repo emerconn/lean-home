@@ -786,7 +786,7 @@ impl Loader<'_> {
 
 /// HA's `_find_files(dir, "*.yaml")`: recursive, skipping dotfiles and dot-dirs, files sorted
 /// within each folder; `secrets.yaml` is never included.
-fn find_yaml_files(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn find_yaml_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };

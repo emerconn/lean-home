@@ -1,5 +1,6 @@
 mod auth;
 mod automation;
+mod blueprint;
 mod condition;
 mod config;
 mod editor;
@@ -55,8 +56,13 @@ impl App {
         let states: Arc<state::States> = Arc::default();
         let restore = restore::Restore::load(config_dir);
         let scripts = script::Scripts::load(&config.scripts, &registry, &states, &restore);
-        let automations =
-            automation::Automations::load(&config.automations, &registry, &states, &restore);
+        let automations = automation::Automations::load(
+            &config.automations,
+            config_dir,
+            &registry,
+            &states,
+            &restore,
+        );
         let app = Self {
             config,
             auth: auth::Auth::load(config_dir)?,

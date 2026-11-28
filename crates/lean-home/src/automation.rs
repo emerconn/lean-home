@@ -325,10 +325,16 @@ impl Automation {
     fn new(
         n: usize,
         raw: &Value,
+        config_dir: &std::path::Path,
         registry: &crate::registry::Registry,
         taken: &dyn Fn(&str) -> bool,
     ) -> Self {
-        let m = raw.as_object().cloned().unwrap_or_default();
+        let (expanded, blueprint_inputs, bp_err) =
+            match crate::blueprint::expand_automation(config_dir, raw) {
+                Ok((v, bp)) => (v, bp, None),
+                Err(e) => (raw.clone(), None, Some(e)),
+            };
+        let m = expanded.as_object().cloned().unwrap_or_default();
         let id = m.get("id").map(id_string);
         let name = m
             .get("alias")
@@ -358,8 +364,8 @@ impl Automation {
             .iter()
             .map(Condition::parse)
             .collect::<Result<Vec<_>, _>>();
-        let check = match (&triggers, &conditions) {
-            (Err(e), _) | (_, Err(e)) => Err(e.clone()),
+        let check = match (bp_err.as_ref(), &triggers, &conditions) {
+            (Some(e), _, _) | (None, Err(e), _) | (None, _, Err(e)) => Err(e.clone()),
             _ => Ok(()),
         };
         let key = entity_id.split_once('.').map_or("", |(_, o)| o).to_string();
@@ -371,10 +377,11 @@ impl Automation {
             (&key, &item_id, id.as_deref()),
             entity_id,
             &name,
-            raw,
+            &expanded,
             plural(&m, "actions").unwrap_or(&Value::Null),
             check,
-        );
+        )
+        .with_blueprint_inputs(blueprint_inputs);
         Self {
             entity: Arc::new(entity),
             triggers: triggers.unwrap_or_default(),
@@ -418,6 +425,7 @@ impl Automations {
     /// From `automation:` in the config; writes each entity's initial state.
     pub fn load(
         config: &[Value],
+        config_dir: &std::path::Path,
         registry: &crate::registry::Registry,
         states: &States,
         restore: &crate::restore::Restore,
@@ -425,7 +433,7 @@ impl Automations {
         let mut items: Vec<Arc<Automation>> = vec![];
         for (n, raw) in config.iter().enumerate() {
             let taken = |eid: &str| items.iter().any(|a| a.entity.entity_id == eid);
-            let a = Automation::new(n, raw, registry, &taken);
+            let a = Automation::new(n, raw, config_dir, registry, &taken);
             a.entity.restore_from(restore, registry);
             a.entity.write(states);
             items.push(Arc::new(a));
@@ -461,9 +469,12 @@ impl Automations {
             if !wanted(raw.get("id").map(id_string)) {
                 continue;
             }
-            let probe = Automation::new(n, raw, &app.registry, &|_| false);
-            let same =
-                |a: &&Arc<Automation>| a.entity.raw == *raw && a.entity.name == probe.entity.name;
+            let probe = Automation::new(n, raw, &app.config_dir, &app.registry, &|_| false);
+            let same = |a: &&Arc<Automation>| {
+                a.entity.raw == probe.entity.raw
+                    && a.entity.name == probe.entity.name
+                    && a.entity.blueprint_inputs == probe.entity.blueprint_inputs
+            };
             if let Some(kept) = old
                 .iter()
                 .filter(|a| !next.iter().any(|b| Arc::ptr_eq(a, b)))
@@ -483,9 +494,11 @@ impl Automations {
             let a = match &prev {
                 Some(p) => {
                     let reuse = p.entity.entity_id.clone();
-                    let mut a = Automation::new(n, raw, &app.registry, &|_| false);
+                    let mut a = Automation::new(n, raw, &app.config_dir, &app.registry, &|_| false);
                     if a.entity.entity_id != reuse {
-                        a = Automation::new(n, raw, &app.registry, &|eid| eid != reuse);
+                        a = Automation::new(n, raw, &app.config_dir, &app.registry, &|eid| {
+                            eid != reuse
+                        });
                     }
                     a
                 }
@@ -494,7 +507,7 @@ impl Automations {
                         app.states.get(eid).is_some()
                             || next.iter().any(|b| b.entity.entity_id == eid)
                     };
-                    Automation::new(n, raw, &app.registry, &taken)
+                    Automation::new(n, raw, &app.config_dir, &app.registry, &taken)
                 }
             };
             let a = Arc::new(a);
@@ -1916,6 +1929,7 @@ async fn trigger(
     let trace = app
         .traces
         .start("automation", &e.item_id, e.raw.clone(), ctx.clone());
+    trace.set_blueprint_inputs(e.blueprint_inputs.clone());
     let run_id = trace.run_id();
     let mut vars = Map::new();
     vars.insert(
@@ -2428,6 +2442,7 @@ mod tests {
         ];
         Automations::load(
             &cfg,
+            std::path::Path::new("/nonexistent"),
             &reg,
             &states,
             &crate::restore::Restore::load(std::path::Path::new("/nonexistent")),
@@ -2667,8 +2682,12 @@ mod tests {
         app.states
             .set("sensor.temp", "20", Map::new(), Context::new(None));
         start(&app);
+        tokio::task::yield_now().await;
         // 60 s has 3 * 20 s ticks
         tokio::time::sleep(Duration::from_secs(60)).await;
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
         assert_eq!(app.traces.list("automation", Some("tp")).len(), 3);
 
         app.states

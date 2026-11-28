@@ -170,6 +170,9 @@ pub async fn delete(app: &Arc<App>, kind: Kind, key: &str) -> Reply {
 // for any invalid option. Here such a config is saved, and its entity is unavailable with the
 // error in the log (as for an unsupported option).
 fn validate(kind: Kind, new: &Map<String, Value>) -> Result<(), String> {
+    if kind == Kind::Automation && new.contains_key("use_blueprint") {
+        return Ok(());
+    }
     let required: &[&str] = match kind {
         Kind::Automation => &["triggers", "actions"],
         Kind::Script => &["sequence"],

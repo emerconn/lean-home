@@ -52,6 +52,7 @@ pub struct Trace {
     item_id: String,
     pub run_id: String,
     config: Value,
+    blueprint_inputs: Option<Value>,
     context: Context,
     start: DateTime<Utc>,
     finish: Option<DateTime<Utc>>,
@@ -97,7 +98,7 @@ impl Trace {
             .collect();
         v["trace"] = trace.into();
         v["config"] = self.config.clone();
-        v["blueprint_inputs"] = Value::Null;
+        v["blueprint_inputs"] = self.blueprint_inputs.clone().unwrap_or(Value::Null);
         v["context"] = self.context.json();
         v
     }
@@ -178,6 +179,11 @@ impl Recorder {
         self.trace.lock().unwrap().trigger = Some(description);
     }
 
+    /// The original `use_blueprint` config for a blueprinted run.
+    pub fn set_blueprint_inputs(&self, inputs: Option<Value>) {
+        self.trace.lock().unwrap().blueprint_inputs = inputs;
+    }
+
     pub fn run_id(&self) -> String {
         self.trace.lock().unwrap().run_id.clone()
     }
@@ -216,6 +222,7 @@ impl Traces {
             item_id: item_id.into(),
             run_id: run_id.iter().map(|b| format!("{b:02x}")).collect(),
             config,
+            blueprint_inputs: None,
             context,
             start: Utc::now(),
             finish: None,

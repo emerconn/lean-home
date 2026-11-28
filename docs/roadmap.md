@@ -87,7 +87,7 @@ What each checked item built and how it was checked: [step-2.md](step-2.md).
 - [x] [The template helpers configs use](step-2.md#timedelta-and-last_reported), starting with
   the house's: `timedelta` (`as_timedelta`, `timedelta_string`), `last_reported` on states
   ([Gaps, templates](#templates)).
-- [ ] Blueprints: `use_blueprint` automations, starting with the two HA puts in every config dir
+- [x] [Blueprints](step-2.md#blueprints): `use_blueprint` automations, starting with the two HA puts in every config dir
   (motion light, which needs `wait_for_trigger`; zone notification).
 - [ ] `sun` trigger and condition (sunrise and sunset checked against HA's `astral`).
 
@@ -213,8 +213,6 @@ why it can wait.
   `not_triggered` traces. An automation using one is unavailable, with the error in the log.
   *When:* step 2's trigger items. *Why:* each is small next to the engine; they share `fire()` in
   `automation.rs`.
-- [ ] **Blueprints**: `!input` loads as a `{"!input": name}` marker, and `use_blueprint`
-  automations aren't expanded. *When:* step 2's blueprints item.
 - [ ] **Automation details**: an automation without an `id` stores traces under its object id (HA
   keeps none); no `automation_triggered` event or logbook entries. *When:* with the logbook.
 - [ ] **Automation runs**: services act on one automation after another (HA calls them
@@ -240,11 +238,12 @@ why it can wait.
   over 128 characters (libyaml's `? key` form) and integers past 2^64 aren't written as HA writes
   them. *When:* full validation once lean-home knows the whole schema; the rest when a config
   needs it.
-- [ ] **Details**: blueprints, categories and `frontend/get_icons` answer empty (the frontend uses
-  its built-in icons); config entries claim no options, reconfigure or unload support, and
+- [ ] **Details**: categories and `frontend/get_icons` answer empty (the frontend uses
+  its built-in icons); `blueprint/import`, `blueprint/save` and `blueprint/delete` are not
+  implemented; config entries claim no options, reconfigure or unload support, and
   `type_filter` is ignored; `subscribe_condition` re-checks on every state change, doesn't poll
   `for:` each second and doesn't forward `template_errors`. *When:* icons with translations,
-  blueprints with step 2, the rest when the integrations page or a config needs it.
+  the rest when the integrations page or a config needs it.
 
 ### Config, YAML and storage
 

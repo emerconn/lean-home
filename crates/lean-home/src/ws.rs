@@ -553,8 +553,32 @@ impl Conn {
             // The automation and script editors.
             "config/entity_registry/list" => ok(app.registry.list_entities().into()),
             "config/category_registry/list" => ok(json!([])),
-            // shortcut: blueprints aren't expanded yet, so none are offered.
-            "blueprint/list" => ok(json!({})),
+            "blueprint/list" => {
+                let Some(domain) = msg["domain"].as_str() else {
+                    return vec![error(
+                        id,
+                        "invalid_format",
+                        "required key not provided @ data['domain']",
+                    )];
+                };
+                ok(crate::blueprint::list(&app.config_dir, domain).into())
+            }
+            "blueprint/substitute" => {
+                let (Some(domain), Some(path), Some(input)) = (
+                    msg["domain"].as_str(),
+                    msg["path"].as_str(),
+                    msg["input"].as_object(),
+                ) else {
+                    return vec![error(id, "invalid_format", "missing domain, path or input")];
+                };
+                let raw = json!({"use_blueprint": {"path": path, "input": input}});
+                match crate::blueprint::Blueprint::load(&app.config_dir, domain, path)
+                    .and_then(|bp| bp.substitute(raw.as_object().unwrap()))
+                {
+                    Ok(config) => ok(json!({"substituted_config": config})),
+                    Err(e) => vec![error(id, "unknown_error", &e)],
+                }
+            }
             // shortcut: no icons.json data yet; the frontend falls back to its built-in icons.
             "frontend/get_icons" => ok(json!({"resources": {}})),
             "manifest/list" => {

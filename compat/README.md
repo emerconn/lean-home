@@ -115,6 +115,17 @@ docker run --rm -i --entrypoint python3 "$HA_IMAGE" - < compat/record-pr2.py \
   > compat/fixtures/step2/pr2-triggers-conditions.json
 ```
 
+## Blueprints
+
+`fixtures/step2/pr4-blueprints.json` records HA's `use_blueprint` substitution, validation,
+service calls and traces for `homeassistant/motion_light.yaml` and
+`homeassistant/notify_leaving_zone.yaml`. Regenerate with:
+
+```bash
+docker run --rm -i --entrypoint python3 "$HA_IMAGE" - < compat/record-pr4.py \
+  > compat/fixtures/step2/pr4-blueprints.json
+```
+
 ## Replay and compare
 
 `compat/replay.sh <scenario>` runs the same scenario against lean-home (same login, browser steps,

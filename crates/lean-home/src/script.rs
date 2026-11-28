@@ -393,6 +393,7 @@ pub struct ScriptEntity {
     pub(crate) entity_id: String,
     pub(crate) name: String,
     pub(crate) raw: Value,
+    pub(crate) blueprint_inputs: Option<Value>,
     /// Err: the config is invalid, the entity is unavailable.
     sequence: Result<Seq, String>,
     mode: Mode,
@@ -457,6 +458,7 @@ impl ScriptEntity {
             entity_id,
             name: name.into(),
             raw: raw.clone(),
+            blueprint_inputs: None,
             sequence,
             mode: mode.unwrap_or(Mode::Single),
             max: raw
@@ -475,6 +477,11 @@ impl ScriptEntity {
             }),
             queue: tokio::sync::Mutex::new(()),
         }
+    }
+
+    pub(crate) fn with_blueprint_inputs(mut self, inputs: Option<Value>) -> Self {
+        self.blueprint_inputs = inputs;
+        self
     }
 
     fn supports_max(&self) -> bool {
