@@ -1,0 +1,373 @@
+{
+  "ha_version": "2026.11.2",
+  "automation_states": {
+    "automation.motion_light_default_wait": {
+      "entity_id": "automation.motion_light_default_wait",
+      "state": "on",
+      "attributes": {
+        "id": "bp_motion_light_default",
+        "last_triggered": null,
+        "mode": "restart",
+        "current": 0,
+        "friendly_name": "Motion Light (default wait)"
+      }
+    },
+    "automation.motion_light_zero_wait": {
+      "entity_id": "automation.motion_light_zero_wait",
+      "state": "on",
+      "attributes": {
+        "id": "bp_motion_light_zero",
+        "last_triggered": "2026-11-26T08:29:33.212520+00:00",
+        "mode": "restart",
+        "current": 0,
+        "friendly_name": "Motion Light (zero wait)"
+      }
+    }
+  },
+  "service_calls": [
+    {
+      "domain": "light",
+      "service": "turn_on",
+      "data": {
+        "entity_id": [
+          "light.kitchen"
+        ]
+      }
+    },
+    {
+      "domain": "light",
+      "service": "turn_off",
+      "data": {
+        "entity_id": [
+          "light.kitchen"
+        ]
+      }
+    }
+  ],
+  "traces": {
+    "automation.bp_motion_light_zero": [
+      {
+        "extended_dict": {
+          "last_step": "action/3",
+          "run_id": "ff49960229903ebe28b48a70fbcd2214",
+          "state": "stopped",
+          "script_execution": "finished",
+          "timestamp": {
+            "start": "2026-11-26T08:29:33.212439+00:00",
+            "finish": "2026-11-26T08:29:33.417505+00:00"
+          },
+          "domain": "automation",
+          "item_id": "bp_motion_light_zero",
+          "trigger": "state of binary_sensor.kitchen_motion",
+          "trace": {
+            "trigger/0": [
+              {
+                "path": "trigger/0",
+                "timestamp": "2026-11-26T08:29:33.212471+00:00",
+                "changed_variables": {
+                  "this": {
+                    "entity_id": "automation.motion_light_zero_wait",
+                    "state": "on",
+                    "attributes": {
+                      "id": "bp_motion_light_zero",
+                      "last_triggered": null,
+                      "mode": "restart",
+                      "current": 0,
+                      "friendly_name": "Motion Light (zero wait)"
+                    },
+                    "last_changed": "2026-11-26T08:29:32.655352+00:00",
+                    "last_reported": "2026-11-26T08:29:32.655352+00:00",
+                    "last_updated": "2026-11-26T08:29:32.655352+00:00",
+                    "context": {
+                      "id": "01M8BFJS3FNEM05MTMJ3XVEAB5",
+                      "parent_id": null,
+                      "user_id": null
+                    }
+                  },
+                  "trigger": {
+                    "id": "0",
+                    "idx": "0",
+                    "alias": null,
+                    "platform": "state",
+                    "entity_id": "binary_sensor.kitchen_motion",
+                    "from_state": {
+                      "entity_id": "binary_sensor.kitchen_motion",
+                      "state": "off",
+                      "attributes": {
+                        "device_class": "motion"
+                      }
+                    },
+                    "to_state": {
+                      "entity_id": "binary_sensor.kitchen_motion",
+                      "state": "on",
+                      "attributes": {
+                        "device_class": "motion"
+                      }
+                    },
+                    "for": null,
+                    "attribute": null,
+                    "description": "state of binary_sensor.kitchen_motion"
+                  }
+                }
+              }
+            ],
+            "action/0": [
+              {
+                "path": "action/0",
+                "timestamp": "2026-11-26T08:29:33.212575+00:00",
+                "changed_variables": {
+                  "context": "<homeassistant.core.Context object at 0x7fbeb03aae30>"
+                },
+                "result": {
+                  "params": {
+                    "domain": "light",
+                    "service": "turn_on",
+                    "service_data": {},
+                    "target": {
+                      "entity_id": [
+                        "light.kitchen"
+                      ]
+                    }
+                  },
+                  "running_script": false
+                }
+              }
+            ],
+            "action/1": [
+              {
+                "path": "action/1",
+                "timestamp": "2026-11-26T08:29:33.212936+00:00",
+                "changed_variables": {
+                  "wait": {
+                    "remaining": null,
+                    "completed": true,
+                    "trigger": {
+                      "id": "0",
+                      "idx": "0",
+                      "alias": null,
+                      "platform": "state",
+                      "entity_id": "binary_sensor.kitchen_motion",
+                      "from_state": {
+                        "entity_id": "binary_sensor.kitchen_motion",
+                        "state": "on",
+                        "attributes": {
+                          "device_class": "motion"
+                        }
+                      },
+                      "to_state": {
+                        "entity_id": "binary_sensor.kitchen_motion",
+                        "state": "off",
+                        "attributes": {
+                          "device_class": "motion"
+                        }
+                      },
+                      "for": null,
+                      "attribute": null,
+                      "description": "state of binary_sensor.kitchen_motion"
+                    }
+                  }
+                },
+                "result": {
+                  "wait": {
+                    "remaining": null,
+                    "completed": true,
+                    "trigger": {
+                      "id": "0",
+                      "idx": "0",
+                      "alias": null,
+                      "platform": "state",
+                      "entity_id": "binary_sensor.kitchen_motion",
+                      "from_state": {
+                        "entity_id": "binary_sensor.kitchen_motion",
+                        "state": "on",
+                        "attributes": {
+                          "device_class": "motion"
+                        }
+                      },
+                      "to_state": {
+                        "entity_id": "binary_sensor.kitchen_motion",
+                        "state": "off",
+                        "attributes": {
+                          "device_class": "motion"
+                        }
+                      },
+                      "for": null,
+                      "attribute": null,
+                      "description": "state of binary_sensor.kitchen_motion"
+                    }
+                  }
+                }
+              }
+            ],
+            "action/2": [
+              {
+                "path": "action/2",
+                "timestamp": "2026-11-26T08:29:33.415847+00:00",
+                "result": {
+                  "delay": 0.0,
+                  "done": true
+                }
+              }
+            ],
+            "action/3": [
+              {
+                "path": "action/3",
+                "timestamp": "2026-11-26T08:29:33.416195+00:00",
+                "result": {
+                  "params": {
+                    "domain": "light",
+                    "service": "turn_off",
+                    "service_data": {},
+                    "target": {
+                      "entity_id": [
+                        "light.kitchen"
+                      ]
+                    }
+                  },
+                  "running_script": false
+                }
+              }
+            ]
+          },
+          "config": {
+            "mode": "restart",
+            "max_exceeded": "silent",
+            "triggers": {
+              "trigger": "state",
+              "entity_id": "binary_sensor.kitchen_motion",
+              "from": "off",
+              "to": "on"
+            },
+            "actions": [
+              {
+                "alias": "Turn on the light",
+                "action": "light.turn_on",
+                "target": {
+                  "entity_id": "light.kitchen"
+                }
+              },
+              {
+                "alias": "Wait until there is no motion from device",
+                "wait_for_trigger": {
+                  "trigger": "state",
+                  "entity_id": "binary_sensor.kitchen_motion",
+                  "from": "on",
+                  "to": "off"
+                }
+              },
+              {
+                "alias": "Wait the number of seconds that has been set",
+                "delay": 0
+              },
+              {
+                "alias": "Turn off the light",
+                "action": "light.turn_off",
+                "target": {
+                  "entity_id": "light.kitchen"
+                }
+              }
+            ],
+            "id": "bp_motion_light_zero",
+            "alias": "Motion Light (zero wait)"
+          },
+          "blueprint_inputs": {
+            "id": "bp_motion_light_zero",
+            "alias": "Motion Light (zero wait)",
+            "use_blueprint": {
+              "path": "homeassistant/motion_light.yaml",
+              "input": {
+                "motion_entity": "binary_sensor.kitchen_motion",
+                "light_target": {
+                  "entity_id": "light.kitchen"
+                },
+                "no_motion_wait": 0
+              }
+            }
+          },
+          "context": "<homeassistant.core.Context object at 0x7fbeb03aae30>"
+        },
+        "short_dict": {
+          "last_step": "action/3",
+          "run_id": "ff49960229903ebe28b48a70fbcd2214",
+          "state": "stopped",
+          "script_execution": "finished",
+          "timestamp": {
+            "start": "2026-11-26T08:29:33.212439+00:00",
+            "finish": "2026-11-26T08:29:33.417505+00:00"
+          },
+          "domain": "automation",
+          "item_id": "bp_motion_light_zero",
+          "trigger": "state of binary_sensor.kitchen_motion"
+        }
+      }
+    ]
+  },
+  "validated_motion_default_raw_config": {
+    "mode": "restart",
+    "max_exceeded": "silent",
+    "triggers": {
+      "trigger": "state",
+      "entity_id": "binary_sensor.hall_motion",
+      "from": "off",
+      "to": "on"
+    },
+    "actions": [
+      {
+        "alias": "Turn on the light",
+        "action": "light.turn_on",
+        "target": {
+          "entity_id": "light.hall"
+        }
+      },
+      {
+        "alias": "Wait until there is no motion from device",
+        "wait_for_trigger": {
+          "trigger": "state",
+          "entity_id": "binary_sensor.hall_motion",
+          "from": "on",
+          "to": "off"
+        }
+      },
+      {
+        "alias": "Wait the number of seconds that has been set",
+        "delay": 120
+      },
+      {
+        "alias": "Turn off the light",
+        "action": "light.turn_off",
+        "target": {
+          "entity_id": "light.hall"
+        }
+      }
+    ],
+    "id": "bp_motion_light_default",
+    "alias": "Motion Light (default wait)"
+  },
+  "substituted_zone_notify_config": {
+    "triggers": {
+      "trigger": "state",
+      "entity_id": "person.alice"
+    },
+    "variables": {
+      "zone_entity": "zone.home",
+      "zone_state": "{{ states[zone_entity].name }}",
+      "person_entity": "person.alice",
+      "person_name": "{{ states[person_entity].name }}"
+    },
+    "conditions": {
+      "condition": "template",
+      "value_template": "{{ zone_entity == 'zone.home' and trigger.from_state.state == 'home' and trigger.to_state.state != 'home' or trigger.from_state.state == zone_state and trigger.to_state.state != zone_state }}"
+    },
+    "actions": [
+      {
+        "alias": "Notify that a person has left the zone",
+        "domain": "mobile_app",
+        "type": "notify",
+        "device_id": "fake_device_id_123",
+        "message": "{{ person_name }} has left {{ zone_state }}"
+      }
+    ],
+    "id": "bp_zone_notify",
+    "alias": "Notify Leaving Home"
+  }
+}

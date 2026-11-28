@@ -223,3 +223,16 @@ with `ScriptTrace` recording. Checked against real HA 2026.11.2 via
 `compat/fixtures/step2/pr3-actions-events.json` (`compat/record-pr3.py`) in `script.rs`
 (`pr3_actions_and_events_replay_like_ha`). Binary size and memory measurements were not taken
 separately for this change.
+
+## Blueprints
+
+(Done: `blueprint.rs`, `automation.rs`, `script.rs`, `trace.rs`, `ws.rs`, `editor.rs`.) Added
+blueprint loading from `blueprints/<domain>/<path>`, one-level sectioned `input:` flattening,
+`!input` extraction and substitution with `default:` fallbacks, and `use_blueprint` expansion in
+`Automation::new` (marking missing or invalid blueprints `unavailable` and recording
+`blueprint_inputs` in `Trace`). Added `blueprint/list` and `blueprint/substitute` WebSocket
+commands and allowed `use_blueprint` automations in `editor::validate`. Checked against real HA
+2026.11.2 via `compat/fixtures/step2/pr4-blueprints.json` (`compat/record-pr4.py`) in
+`blueprint.rs` (`default_blueprints_match_ha_fixture` and end-to-end
+`motion_light_blueprint_runs_end_to_end`). Binary size and memory measurements were not taken
+separately for this change.
