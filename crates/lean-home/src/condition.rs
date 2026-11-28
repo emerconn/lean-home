@@ -3,12 +3,22 @@
 
 use std::sync::Arc;
 
+use chrono::{DateTime, Datelike, NaiveTime, Utc};
 use serde_json::{Map, Value, json};
 
+use crate::config::Zone;
 use crate::script::{render_complex, time_period};
 use crate::state::{States, iso};
 use crate::template;
 use crate::trace::{ElementRef, Recorder};
+
+pub const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+#[derive(Debug, Clone)]
+pub enum TimeBound {
+    Fixed(NaiveTime),
+    Entity(String),
+}
 
 #[derive(Debug, Clone)]
 pub enum Condition {
@@ -33,6 +43,11 @@ pub enum Condition {
     Template(String),
     /// The automation's trigger has one of these ids.
     Trigger(Vec<String>),
+    Time {
+        after: Option<TimeBound>,
+        before: Option<TimeBound>,
+        weekdays: Option<Vec<String>>,
+    },
 }
 
 /// `cv.entity_ids`: a list, or a comma-separated string.
@@ -120,7 +135,23 @@ impl Condition {
                 Some(id) => vec![id_string(id)],
                 None => return Err("trigger condition: required key 'id' missing".into()),
             }),
-            // shortcut: time, sun, zone, device… conditions come with the configs that use them.
+            "time" => {
+                let after = m.get("after").map(parse_time_bound).transpose()?;
+                let before = m.get("before").map(parse_time_bound).transpose()?;
+                let weekdays = m.get("weekday").map(parse_weekdays).transpose()?;
+                if after.is_none() && before.is_none() && weekdays.is_none() {
+                    return Err(
+                        "time condition: must contain at least one of after, before, weekday"
+                            .into(),
+                    );
+                }
+                Self::Time {
+                    after,
+                    before,
+                    weekdays,
+                }
+            }
+            // shortcut: sun, zone, device… conditions come with the configs that use them.
             other => return Err(format!("condition type '{other}' is not supported yet")),
         })
     }
@@ -277,6 +308,19 @@ impl Condition {
                 t.get("id")
                     .is_some_and(|id| ids.iter().any(|i| *id == Value::String(i.clone())))
             })),
+            Self::Time {
+                after,
+                before,
+                weekdays,
+            } => time_condition(
+                ev,
+                at,
+                after.as_ref(),
+                before.as_ref(),
+                weekdays.as_deref(),
+                template::now_utc(),
+                &template::local_tz(),
+            ),
         }
     }
 }
@@ -455,6 +499,149 @@ fn numeric_state(
     Ok(true)
 }
 
+fn parse_naive_time(s: &str) -> Option<NaiveTime> {
+    NaiveTime::parse_from_str(s, "%H:%M:%S%.f")
+        .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M:%S"))
+        .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+        .ok()
+}
+
+fn parse_time_bound(v: &Value) -> Result<TimeBound, String> {
+    match v {
+        Value::String(s) => {
+            if let Some(t) = parse_naive_time(s) {
+                Ok(TimeBound::Fixed(t))
+            } else if s.contains('.') {
+                Ok(TimeBound::Entity(s.trim().to_lowercase()))
+            } else {
+                Err(format!("time condition: invalid time or entity_id '{s}'"))
+            }
+        }
+        // YAML 1.1 turns unquoted `08:00:00` into seconds since midnight.
+        Value::Number(n) => n
+            .as_u64()
+            .and_then(|s| u32::try_from(s).ok())
+            .and_then(|s| NaiveTime::from_num_seconds_from_midnight_opt(s, 0))
+            .map(TimeBound::Fixed)
+            .ok_or_else(|| format!("time condition: invalid time value {v}")),
+        _ => Err(format!("time condition: invalid time value {v}")),
+    }
+}
+
+pub fn parse_weekdays(v: &Value) -> Result<Vec<String>, String> {
+    let items = match v {
+        Value::Array(a) => a.as_slice(),
+        other => std::slice::from_ref(other),
+    };
+    items
+        .iter()
+        .map(|d| {
+            let s = d
+                .as_str()
+                .map(|x| x.trim().to_lowercase())
+                .ok_or_else(|| format!("time condition: invalid weekday {d}"))?;
+            if !WEEKDAYS.iter().any(|w| *w == s) {
+                return Err(format!("time condition: invalid weekday '{s}'"));
+            }
+            Ok(s)
+        })
+        .collect()
+}
+
+fn resolve_time_bound(
+    ev: &Eval,
+    bound: &TimeBound,
+    which: &str,
+    tz: &Zone,
+) -> Result<Option<NaiveTime>, String> {
+    match bound {
+        TimeBound::Fixed(t) => Ok(Some(*t)),
+        TimeBound::Entity(id) => {
+            let s = ev
+                .states
+                .get(id)
+                .ok_or_else(|| format!("In 'time' condition: unknown '{which}' entity {id}"))?;
+            if s.state == "unavailable" || s.state == "unknown" {
+                return Err(format!(
+                    "In 'time' condition: '{which}' entity {id} is {}",
+                    s.state
+                ));
+            }
+            if id.starts_with("input_datetime.") {
+                // HA's time condition checks `has_time` on input_datetime; without it, no bound.
+                if s.attributes.get("has_time").and_then(Value::as_bool) != Some(true) {
+                    return Ok(None);
+                }
+                let h = s
+                    .attributes
+                    .get("hour")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as u32;
+                let m = s
+                    .attributes
+                    .get("minute")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as u32;
+                let sec = s
+                    .attributes
+                    .get("second")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as u32;
+                return NaiveTime::from_hms_opt(h, m, sec)
+                    .map(Some)
+                    .ok_or_else(|| format!("In 'time' condition: invalid time on {id}"));
+            }
+            if let Ok(dt) = DateTime::parse_from_rfc3339(&s.state) {
+                let utc = dt.with_timezone(&Utc);
+                return Ok(Some((utc + tz.offset(utc)).time()));
+            }
+            parse_naive_time(&s.state).map(Some).ok_or_else(|| {
+                format!(
+                    "In 'time' condition: '{which}' entity {id} state '{}' is not a valid time",
+                    s.state
+                )
+            })
+        }
+    }
+}
+
+fn time_condition(
+    ev: &Eval,
+    at: &Option<ElementRef>,
+    after: Option<&TimeBound>,
+    before: Option<&TimeBound>,
+    weekdays: Option<&[String]>,
+    now: DateTime<Utc>,
+    tz: &Zone,
+) -> Result<bool, String> {
+    let local = now + tz.offset(now);
+    if let Some(days) = weekdays {
+        let today = WEEKDAYS[local.weekday().num_days_from_monday() as usize];
+        if !days.iter().any(|d| d == today) {
+            ev.set(at, json!({"result": false}));
+            return Ok(false);
+        }
+    }
+    let after_t = after
+        .map(|b| resolve_time_bound(ev, b, "after", tz))
+        .transpose()?
+        .flatten();
+    let before_t = before
+        .map(|b| resolve_time_bound(ev, b, "before", tz))
+        .transpose()?
+        .flatten();
+    let now_t = local.time();
+    let result = match (after_t, before_t) {
+        (Some(a), Some(b)) if a > b => now_t >= a || now_t < b,
+        (Some(a), Some(b)) => now_t >= a && now_t < b,
+        (Some(a), None) => now_t >= a,
+        (None, Some(b)) => now_t < b,
+        (None, None) => true,
+    };
+    ev.set(at, json!({"result": result}));
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,6 +771,129 @@ mod tests {
             check(fan(json!("nope")))
                 .unwrap_err()
                 .contains("schema error")
+        );
+    }
+
+    #[test]
+    fn time_condition_matches_ha_recording() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../compat/fixtures/step2/pr2-triggers-conditions.json"
+        ))
+        .unwrap();
+        let s = Arc::new(States::default());
+        s.set(
+            "input_datetime.start",
+            "08:00:00",
+            Map::new(),
+            Context::new(None),
+        );
+        s.set(
+            "input_datetime.end",
+            "17:00:00",
+            Map::new(),
+            Context::new(None),
+        );
+        let vars = Map::new();
+        let ev = Eval {
+            states: &s,
+            vars: &vars,
+            trace: None,
+        };
+        let utc = Zone::utc();
+        for case in fixture["time_conditions"].as_array().unwrap() {
+            let Condition::Time {
+                after,
+                before,
+                weekdays,
+            } = Condition::parse(&case["config"]).unwrap()
+            else {
+                panic!("expected time condition");
+            };
+            for (ts, expected) in case["results"].as_object().unwrap() {
+                let now = ts.parse::<DateTime<Utc>>().unwrap();
+                let got = time_condition(
+                    &ev,
+                    &None,
+                    after.as_ref(),
+                    before.as_ref(),
+                    weekdays.as_deref(),
+                    now,
+                    &utc,
+                )
+                .unwrap();
+                assert_eq!(
+                    got,
+                    expected.as_bool().unwrap(),
+                    "case {} at {ts}",
+                    case["config"]
+                );
+            }
+        }
+
+        // input_datetime with has_time=true and sensor timestamp
+        s.set(
+            "input_datetime.with_time",
+            "08:30:00",
+            json!({"has_time": true, "hour": 8, "minute": 30, "second": 0})
+                .as_object()
+                .unwrap()
+                .clone(),
+            Context::new(None),
+        );
+        s.set(
+            "sensor.alarm",
+            "2026-11-24T17:00:00+00:00",
+            Map::new(),
+            Context::new(None),
+        );
+        let Condition::Time {
+            after,
+            before,
+            weekdays,
+        } = Condition::parse(&json!({
+            "condition": "time",
+            "after": "input_datetime.with_time",
+            "before": "sensor.alarm"
+        }))
+        .unwrap()
+        else {
+            unreachable!();
+        };
+        assert_eq!(
+            time_condition(
+                &ev,
+                &None,
+                after.as_ref(),
+                before.as_ref(),
+                weekdays.as_deref(),
+                "2026-11-24T08:30:00Z".parse().unwrap(),
+                &utc,
+            ),
+            Ok(true)
+        );
+        assert_eq!(
+            time_condition(
+                &ev,
+                &None,
+                after.as_ref(),
+                before.as_ref(),
+                weekdays.as_deref(),
+                "2026-11-24T08:29:59Z".parse().unwrap(),
+                &utc,
+            ),
+            Ok(false)
+        );
+        assert_eq!(
+            time_condition(
+                &ev,
+                &None,
+                after.as_ref(),
+                before.as_ref(),
+                weekdays.as_deref(),
+                "2026-11-24T17:00:00Z".parse().unwrap(),
+                &utc,
+            ),
+            Ok(false)
         );
     }
 }

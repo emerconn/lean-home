@@ -103,6 +103,18 @@ docker run --rm -v "$PWD/bench/.work/ha-core-tests/tests/helpers/template:/tests
 
 The generator only parses the test files (Python's `ast`); it never runs them.
 
+## Step 2 trigger and condition cases
+
+`fixtures/step2/pr2-triggers-conditions.json` records real HA 2026.11.2 trigger events
+(`numeric_state`, `template`, `homeassistant` start/shutdown), `time_pattern` matches, and
+`time` condition evaluations (including overnight wrap, weekday, and `entity_id` bounds).
+`automation.rs` and `condition.rs` replay them in unit tests. Regenerate with:
+
+```bash
+docker run --rm -i --entrypoint python3 "$HA_IMAGE" - < compat/record-pr2.py \
+  > compat/fixtures/step2/pr2-triggers-conditions.json
+```
+
 ## Replay and compare
 
 `compat/replay.sh <scenario>` runs the same scenario against lean-home (same login, browser steps,

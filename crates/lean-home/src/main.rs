@@ -183,6 +183,7 @@ fn main() {
             .await
             .unwrap_or_else(|e| exit(&e.to_string()));
         // As HA at EVENT_HOMEASSISTANT_STOP.
+        automation::stop(&app).await;
         app.restore.dump(&app);
         if let Some(m) = app.mqtt.get() {
             m.stop().await;
