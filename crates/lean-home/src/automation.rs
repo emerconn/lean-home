@@ -7,12 +7,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use chrono::{DateTime, Datelike, NaiveTime, Utc};
+use chrono::{DateTime, Datelike, NaiveTime, Timelike, Utc};
 use serde_json::{Map, Value, json};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::AbortHandle;
 
-use crate::condition::{Condition, Eval, entity_ids, id_string};
+use crate::condition::{Condition, Eval, WEEKDAYS, entity_ids, id_string, parse_weekdays};
 use crate::mqtt::{slugify, topic_matches};
 use crate::script::{ScriptEntity, Vars, launch, render_complex, time_period};
 use crate::services::Outcome;
@@ -53,6 +53,32 @@ enum Kind {
         at: Vec<NaiveTime>,
         weekdays: Option<Vec<String>>,
     },
+    NumericState {
+        entity_ids: Vec<String>,
+        above: Option<Value>,
+        below: Option<Value>,
+        attribute: Option<String>,
+        value_template: Option<String>,
+        for_: Option<Value>,
+    },
+    Template {
+        value_template: String,
+        for_: Option<Value>,
+    },
+    HomeAssistant {
+        event: HaEvent,
+    },
+    TimePattern {
+        hours: Vec<u32>,
+        minutes: Vec<u32>,
+        seconds: Vec<u32>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HaEvent {
+    Start,
+    Shutdown,
 }
 
 /// HA's `process_state_match`; `Null` is a missing state (the entity was added or removed).
@@ -72,8 +98,6 @@ impl Match {
         }
     }
 }
-
-const WEEKDAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 /// One of `config`'s keys, or its legacy singular name (`triggers`/`trigger`).
 fn plural<'a>(m: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
@@ -161,15 +185,69 @@ fn parse_trigger(idx: usize, v: &Value) -> Result<Trigger, String> {
                         .ok_or_else(|| format!("time trigger: unsupported 'at' {a}"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let weekdays = m.get("weekday").map(|w| {
-                list(Some(w))
-                    .iter()
-                    .filter_map(|d| d.as_str().map(String::from))
-                    .collect()
-            });
+            let weekdays = m.get("weekday").map(parse_weekdays).transpose()?;
             Kind::Time { at, weekdays }
         }
-        // shortcut: the other platforms (event, numeric_state, template, sun, homeassistant…)
+        "numeric_state" => {
+            let ids = entity_ids(m.get("entity_id").unwrap_or(&Value::Null));
+            if ids.is_empty() {
+                return Err("required key not provided @ data['entity_id']".into());
+            }
+            if !m.contains_key("above") && !m.contains_key("below") {
+                return Err(
+                    "numeric_state trigger: must contain at least one of below, above".into(),
+                );
+            }
+            Kind::NumericState {
+                entity_ids: ids,
+                above: m.get("above").cloned(),
+                below: m.get("below").cloned(),
+                attribute: str_opt("attribute"),
+                value_template: str_opt("value_template"),
+                for_: m.get("for").cloned(),
+            }
+        }
+        "template" => Kind::Template {
+            value_template: str_opt("value_template")
+                .ok_or("required key not provided @ data['value_template']")?,
+            for_: m.get("for").cloned(),
+        },
+        "homeassistant" => {
+            let event = match str_opt("event").as_deref() {
+                Some("start") => HaEvent::Start,
+                Some("shutdown") => HaEvent::Shutdown,
+                Some(other) => {
+                    return Err(format!(
+                        "homeassistant trigger: unsupported event '{other}'"
+                    ));
+                }
+                None => return Err("required key not provided @ data['event']".into()),
+            };
+            Kind::HomeAssistant { event }
+        }
+        "time_pattern" => {
+            let h = m.get("hours");
+            let mut min = m.get("minutes").cloned();
+            let mut sec = m.get("seconds").cloned();
+            if h.is_none() && min.is_none() && sec.is_none() {
+                return Err(
+                    "time_pattern trigger: must contain at least one of hours, minutes, seconds"
+                        .into(),
+                );
+            }
+            if min.is_none() && h.is_some() {
+                min = Some(json!(0));
+            }
+            if sec.is_none() && min.is_some() {
+                sec = Some(json!(0));
+            }
+            Kind::TimePattern {
+                hours: parse_time_expr(h, 0, 23)?,
+                minutes: parse_time_expr(min.as_ref(), 0, 59)?,
+                seconds: parse_time_expr(sec.as_ref(), 0, 59)?,
+            }
+        }
+        // shortcut: the other platforms (event, sun…)
         // come with the configs that use them; an automation using one is unavailable.
         other => return Err(format!("trigger platform '{other}' is not supported yet")),
     };
@@ -195,14 +273,24 @@ impl Trigger {
     }
 }
 
+#[derive(Debug, Clone)]
+struct TemplateState {
+    prev: bool,
+    listeners: template::Listeners,
+}
+
 pub struct Automation {
     entity: Arc<ScriptEntity>,
     triggers: Vec<Trigger>,
     conditions: Vec<Condition>,
     /// Its armed triggers' tasks (time timers, MQTT listeners), stopped when it's removed.
     tasks: Mutex<Vec<AbortHandle>>,
-    /// (trigger index, entity) -> the timer waiting out a state trigger's `for:`.
+    /// (trigger index, entity) -> the timer waiting out a state/numeric_state/template trigger's `for:`.
     pending: Mutex<HashMap<(usize, String), AbortHandle>>,
+    /// (trigger index, entity) -> whether the numeric_state trigger is currently in range.
+    numeric_armed: Mutex<HashMap<(usize, String), bool>>,
+    /// trigger index -> last evaluated boolean and listeners for template triggers.
+    template_state: Mutex<HashMap<usize, TemplateState>>,
 }
 
 impl Automation {
@@ -266,6 +354,8 @@ impl Automation {
             conditions: conditions.unwrap_or_default(),
             tasks: Mutex::default(),
             pending: Mutex::default(),
+            numeric_armed: Mutex::default(),
+            template_state: Mutex::default(),
         }
     }
 
@@ -427,11 +517,11 @@ pub fn start(app: &Arc<App>) {
         arm(app, &a);
     }
     let (mut rx, _) = app.states.subscribe();
-    let app = app.clone();
+    let app2 = app.clone();
     tokio::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(change) => on_state(&app, &change),
+                Ok(change) => on_state(&app2, &change),
                 Err(RecvError::Lagged(k)) => {
                     eprintln!("automation: {k} state changes dropped (too slow)")
                 }
@@ -439,9 +529,66 @@ pub fn start(app: &Arc<App>) {
             }
         }
     });
+    // Fire `homeassistant: start` triggers after all triggers are armed.
+    for a in app.automations.all() {
+        if !a.entity.available() || !a.entity.enabled() {
+            continue;
+        }
+        for t in &a.triggers {
+            if matches!(
+                t.kind,
+                Kind::HomeAssistant {
+                    event: HaEvent::Start
+                }
+            ) && armed(app, &a, t)
+            {
+                fire(app, &a, t, ha_event_data(t, HaEvent::Start), None);
+            }
+        }
+    }
 }
 
-/// Attach one automation's MQTT and time triggers (state triggers are checked in `on_state`).
+/// Fire `homeassistant: shutdown` triggers and wait for their runs to finish.
+pub async fn stop(app: &Arc<App>) {
+    let mut handles = vec![];
+    for a in app.automations.all() {
+        if !a.entity.available() || !a.entity.enabled() {
+            continue;
+        }
+        for t in &a.triggers {
+            if matches!(
+                t.kind,
+                Kind::HomeAssistant {
+                    event: HaEvent::Shutdown
+                }
+            ) && armed(app, &a, t)
+                && let Some(run_vars) =
+                    prepare_fire(app, &a, t, ha_event_data(t, HaEvent::Shutdown))
+            {
+                let (app, a) = (app.clone(), a.clone());
+                handles.push(tokio::spawn(async move {
+                    trigger(&app, &a, run_vars, None, false).await
+                }));
+            }
+        }
+    }
+    for h in handles {
+        let _ = h.await;
+    }
+}
+
+fn ha_event_data(t: &Trigger, event: HaEvent) -> Map<String, Value> {
+    let mut data = t.data("homeassistant");
+    let (ev, desc) = match event {
+        HaEvent::Start => ("start", "Home Assistant starting"),
+        HaEvent::Shutdown => ("shutdown", "Home Assistant stopping"),
+    };
+    data.insert("event".into(), ev.into());
+    data.insert("description".into(), desc.into());
+    data
+}
+
+/// Attach one automation's MQTT, time, time_pattern, numeric_state and template triggers.
 fn arm(app: &Arc<App>, a: &Arc<Automation>) {
     if !a.entity.available() {
         return;
@@ -452,7 +599,34 @@ fn arm(app: &Arc<App>, a: &Arc<Automation>) {
             continue;
         }
         match &t.kind {
-            Kind::State { .. } => {}
+            Kind::State { .. } | Kind::HomeAssistant { .. } => {}
+            Kind::NumericState {
+                entity_ids,
+                above,
+                below,
+                attribute,
+                value_template,
+                ..
+            } => {
+                let mut map = a.numeric_armed.lock().unwrap();
+                for eid in entity_ids {
+                    let in_range = eval_numeric_state(
+                        app,
+                        a,
+                        eid,
+                        above.as_ref(),
+                        below.as_ref(),
+                        attribute.as_deref(),
+                        value_template.as_deref(),
+                    )
+                    .is_ok_and(|(ok, _, _)| ok);
+                    map.insert((ti, eid.clone()), in_range);
+                }
+            }
+            Kind::Template { value_template, .. } => {
+                let st = eval_template_trigger(app, a, value_template);
+                a.template_state.lock().unwrap().insert(ti, st);
+            }
             Kind::Mqtt { topic, qos, .. } => {
                 let Some(mqtt) = app.mqtt.get() else {
                     a.entity.log("ERROR", "MQTT trigger: MQTT is not set up");
@@ -478,6 +652,13 @@ fn arm(app: &Arc<App>, a: &Arc<Automation>) {
                 for &at in at {
                     tasks.push(tokio::spawn(time_trigger(app.clone(), a.clone(), ti, at)));
                 }
+            }
+            Kind::TimePattern { .. } => {
+                tasks.push(tokio::spawn(time_pattern_trigger(
+                    app.clone(),
+                    a.clone(),
+                    ti,
+                )));
             }
         }
     }
@@ -517,16 +698,14 @@ fn attach_vars(app: &App, a: &Automation) -> Map<String, Value> {
     v
 }
 
-/// A trigger fired: run the automation in the background, if it's on.
-fn fire(
-    app: &Arc<App>,
-    a: &Arc<Automation>,
+fn prepare_fire(
+    app: &App,
+    a: &Automation,
     t: &Trigger,
     data: Map<String, Value>,
-    ctx: Option<Context>,
-) {
+) -> Option<Map<String, Value>> {
     if !a.entity.enabled() {
-        return;
+        return None;
     }
     let mut run_vars = Map::new();
     // HA's `_trigger_action_wrapper`: the trigger's own `variables`, rendered with `trigger`.
@@ -540,132 +719,497 @@ fn fire(
                     run_vars.insert(k.clone(), r);
                 }
                 Err(e) => {
-                    return a
-                        .entity
+                    a.entity
                         .log("ERROR", &format!("Error rendering trigger variables: {e}"));
+                    return None;
                 }
             }
         }
     }
     run_vars.insert("trigger".into(), data.into());
+    Some(run_vars)
+}
+
+/// A trigger fired: run the automation in the background, if it's on.
+fn fire(
+    app: &Arc<App>,
+    a: &Arc<Automation>,
+    t: &Trigger,
+    data: Map<String, Value>,
+    ctx: Option<Context>,
+) {
+    let Some(run_vars) = prepare_fire(app, a, t, data) else {
+        return;
+    };
     let (app, a) = (app.clone(), a.clone());
     tokio::spawn(async move { trigger(&app, &a, run_vars, ctx.as_ref(), false).await });
 }
 
-/// HA's `state_automation_listener`, for every automation's state triggers.
+/// HA's `state_automation_listener`, for every automation's state, numeric_state, and template triggers.
 fn on_state(app: &Arc<App>, change: &Change) {
+    let lifecycle = change.old.is_none() || change.new.is_none();
     for a in app.automations.all() {
         if !a.entity.available() || !a.entity.enabled() {
             continue;
         }
         for t in &a.triggers {
-            let Kind::State {
-                entity_ids,
-                from,
-                to,
-                match_all,
-                attribute,
-                for_,
-                keep_from,
-            } = &t.kind
-            else {
-                continue;
-            };
-            if !entity_ids.iter().any(|e| **e == *change.entity_id) {
-                continue;
-            }
-            let value = |s: &Option<Arc<crate::state::State>>| match (s, attribute) {
-                (None, _) => Value::Null,
-                (Some(s), None) => Value::String(s.state.clone()),
-                (Some(s), Some(a)) => s.attributes.get(a).cloned().unwrap_or(Value::Null),
-            };
-            let (old, new) = (value(&change.old), value(&change.new));
-            if attribute.is_some() && old == new {
-                continue;
-            }
-            if !from.test(&old) || !to.test(&new) || (!match_all && old == new) {
-                continue;
-            }
-            let json = |s: &Option<Arc<crate::state::State>>| s.as_ref().map(|s| s.json());
-            let mut data = t.data("state");
-            data.insert("entity_id".into(), (*change.entity_id).into());
-            data.insert("from_state".into(), json(&change.old).into());
-            data.insert("to_state".into(), json(&change.new).into());
-            data.insert("for".into(), Value::Null);
-            data.insert("attribute".into(), attribute.clone().into());
-            data.insert(
-                "description".into(),
-                format!("state of {}", change.entity_id).into(),
-            );
-            let Some(for_) = for_ else {
-                fire(app, &a, t, data, Some(change.context.clone()));
-                continue;
-            };
-            // `for:`: fire once the entity has kept the matched state that long.
-            let mut scope = attach_vars(app, &a);
-            scope.insert(
-                "trigger".into(),
-                json!({"platform": "state", "entity_id": &*change.entity_id,
-                    "from_state": data["from_state"], "to_state": data["to_state"]}),
-            );
-            let secs = match render_complex(&app.states, for_, &scope).and_then(|v| time_period(&v))
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Error rendering '{}' for template: {e}", a.entity.name);
-                    continue;
-                }
-            };
-            // HA's JSON encoder writes a timedelta this way.
-            // shortcut: templates see this dict too, where HA's see a timedelta
-            // (`trigger.for.total_seconds()` fails); add a timedelta value to the template engine.
-            data.insert(
-                "for".into(),
-                json!({"__type": "<class 'datetime.timedelta'>", "total_seconds": secs}),
-            );
-            let keep_from = *keep_from;
-            let same = {
-                let attribute = attribute.clone();
-                move |s: &crate::state::State| {
-                    let cur = match &attribute {
-                        None => Value::String(s.state.clone()),
-                        Some(a) => s.attributes.get(a).cloned().unwrap_or(Value::Null),
-                    };
-                    if keep_from { cur != old } else { cur == new }
-                }
-            };
-            // Subscribed now, so no change between this one and the timer's start is missed.
-            let (mut rx, _) = app.states.subscribe();
-            let (app2, a2, entity, ctx) = (
-                app.clone(),
-                a.clone(),
-                change.entity_id.clone(),
-                change.context.clone(),
-            );
-            let ti = t.idx;
-            let handle = tokio::spawn(async move {
-                let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(secs);
-                loop {
-                    tokio::select! {
-                        _ = tokio::time::sleep_until(deadline) => break,
-                        r = rx.recv() => match r {
-                            Ok(c) if c.entity_id == entity => {
-                                if !c.new.as_deref().is_some_and(&same) {
-                                    return;
-                                }
-                            }
-                            Err(RecvError::Closed) => return,
-                            _ => {}
-                        },
-                    }
-                }
-                fire(&app2, &a2, &a2.triggers[ti], data, Some(ctx));
-            });
-            let key = (t.idx, change.entity_id.to_string());
-            if let Some(old) = a.pending.lock().unwrap().insert(key, handle.abort_handle()) {
-                old.abort();
+            match &t.kind {
+                Kind::State { .. } => on_state_trigger(app, &a, t, change),
+                Kind::NumericState { .. } => on_numeric_state_trigger(app, &a, t, change),
+                Kind::Template { .. } => on_template_trigger(app, &a, t, change, lifecycle),
+                _ => {}
             }
         }
+    }
+}
+
+fn on_state_trigger(app: &Arc<App>, a: &Arc<Automation>, t: &Trigger, change: &Change) {
+    let Kind::State {
+        entity_ids,
+        from,
+        to,
+        match_all,
+        attribute,
+        for_,
+        keep_from,
+    } = &t.kind
+    else {
+        return;
+    };
+    if !entity_ids.iter().any(|e| **e == *change.entity_id) {
+        return;
+    }
+    let value = |s: &Option<Arc<crate::state::State>>| match (s, attribute) {
+        (None, _) => Value::Null,
+        (Some(s), None) => Value::String(s.state.clone()),
+        (Some(s), Some(a)) => s.attributes.get(a).cloned().unwrap_or(Value::Null),
+    };
+    let (old, new) = (value(&change.old), value(&change.new));
+    if attribute.is_some() && old == new {
+        return;
+    }
+    if !from.test(&old) || !to.test(&new) || (!match_all && old == new) {
+        return;
+    }
+    let json = |s: &Option<Arc<crate::state::State>>| s.as_ref().map(|s| s.json());
+    let mut data = t.data("state");
+    data.insert("entity_id".into(), (*change.entity_id).into());
+    data.insert("from_state".into(), json(&change.old).into());
+    data.insert("to_state".into(), json(&change.new).into());
+    data.insert("for".into(), Value::Null);
+    data.insert("attribute".into(), attribute.clone().into());
+    data.insert(
+        "description".into(),
+        format!("state of {}", change.entity_id).into(),
+    );
+    let Some(for_) = for_ else {
+        fire(app, a, t, data, Some(change.context.clone()));
+        return;
+    };
+    // `for:`: fire once the entity has kept the matched state that long.
+    let mut scope = attach_vars(app, a);
+    scope.insert(
+        "trigger".into(),
+        json!({"platform": "state", "entity_id": &*change.entity_id,
+            "from_state": data["from_state"], "to_state": data["to_state"]}),
+    );
+    let secs = match render_complex(&app.states, for_, &scope).and_then(|v| time_period(&v)) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error rendering '{}' for template: {e}", a.entity.name);
+            return;
+        }
+    };
+    // HA's JSON encoder writes a timedelta this way.
+    // shortcut: templates see this dict too, where HA's see a timedelta
+    // (`trigger.for.total_seconds()` fails); add a timedelta value to the template engine.
+    data.insert(
+        "for".into(),
+        json!({"__type": "<class 'datetime.timedelta'>", "total_seconds": secs}),
+    );
+    let keep_from = *keep_from;
+    let same = {
+        let attribute = attribute.clone();
+        move |s: &crate::state::State| {
+            let cur = match &attribute {
+                None => Value::String(s.state.clone()),
+                Some(a) => s.attributes.get(a).cloned().unwrap_or(Value::Null),
+            };
+            if keep_from { cur != old } else { cur == new }
+        }
+    };
+    // Subscribed now, so no change between this one and the timer's start is missed.
+    let (mut rx, _) = app.states.subscribe();
+    let (app2, a2, entity, ctx) = (
+        app.clone(),
+        a.clone(),
+        change.entity_id.clone(),
+        change.context.clone(),
+    );
+    let ti = t.idx;
+    let handle = tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(secs);
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => break,
+                r = rx.recv() => match r {
+                    Ok(c) if c.entity_id == entity => {
+                        if !c.new.as_deref().is_some_and(&same) {
+                            return;
+                        }
+                    }
+                    Err(RecvError::Closed) => return,
+                    _ => {}
+                },
+            }
+        }
+        fire(&app2, &a2, &a2.triggers[ti], data, Some(ctx));
+    });
+    let key = (t.idx, change.entity_id.to_string());
+    if let Some(old) = a.pending.lock().unwrap().insert(key, handle.abort_handle()) {
+        old.abort();
+    }
+}
+
+fn bound_entity(b: Option<&Value>) -> Option<&str> {
+    b.and_then(Value::as_str).filter(|s| s.contains('.'))
+}
+
+fn resolve_numeric_bound(app: &App, b: &Value) -> Result<Option<f64>, String> {
+    match b {
+        Value::Number(n) => Ok(n.as_f64()),
+        Value::String(id) => {
+            let Some(s) = app.states.get(id) else {
+                return Ok(None);
+            };
+            if s.state == "unavailable" || s.state == "unknown" {
+                return Ok(None);
+            }
+            s.state
+                .trim()
+                .parse::<f64>()
+                .map(Some)
+                .map_err(|_| format!("bound entity {id} state '{}' is not numeric", s.state))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Returns `Ok((in_range, above_val, below_val))` for `entity_id` against `numeric_state` bounds.
+fn eval_numeric_state(
+    app: &App,
+    a: &Automation,
+    entity_id: &str,
+    above: Option<&Value>,
+    below: Option<&Value>,
+    attribute: Option<&str>,
+    value_template: Option<&str>,
+) -> Result<(bool, Option<f64>, Option<f64>), String> {
+    let Some(s) = app.states.get(entity_id) else {
+        return Ok((false, None, None));
+    };
+    if let Some(attr) = attribute
+        && !s.attributes.contains_key(attr)
+    {
+        return Ok((false, None, None));
+    }
+    let value: Value = match value_template {
+        Some(tpl) => {
+            let mut vars = attach_vars(app, a);
+            vars.insert("state".into(), s.json());
+            let (text, _) = template::render(&app.states, tpl, &Value::Object(vars), false)?;
+            template::result(tpl, &text)
+        }
+        None => match attribute {
+            Some(attr) => s.attributes.get(attr).cloned().unwrap_or(Value::Null),
+            None => Value::String(s.state.clone()),
+        },
+    };
+    if value.is_null() || value == "unavailable" || value == "unknown" {
+        return Ok((false, None, None));
+    }
+    let fvalue = match &value {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        Value::Bool(b) => Some(*b as u8 as f64),
+        _ => None,
+    };
+    let Some(fvalue) = fvalue else {
+        return Ok((false, None, None));
+    };
+    let above_val = above
+        .map(|b| resolve_numeric_bound(app, b))
+        .transpose()?
+        .flatten();
+    let below_val = below
+        .map(|b| resolve_numeric_bound(app, b))
+        .transpose()?
+        .flatten();
+    if above.is_some() && above_val.is_none() {
+        return Ok((false, above_val, below_val));
+    }
+    if below.is_some() && below_val.is_none() {
+        return Ok((false, above_val, below_val));
+    }
+    let ok = above_val.is_none_or(|a| fvalue > a) && below_val.is_none_or(|b| fvalue < b);
+    Ok((ok, above_val, below_val))
+}
+
+fn on_numeric_state_trigger(app: &Arc<App>, a: &Arc<Automation>, t: &Trigger, change: &Change) {
+    let Kind::NumericState {
+        entity_ids,
+        above,
+        below,
+        attribute,
+        value_template,
+        for_,
+    } = &t.kind
+    else {
+        return;
+    };
+    let changed_bound = bound_entity(above.as_ref()) == Some(&*change.entity_id)
+        || bound_entity(below.as_ref()) == Some(&*change.entity_id);
+    if !changed_bound && !entity_ids.iter().any(|e| **e == *change.entity_id) {
+        return;
+    }
+    let targets: Vec<String> = if changed_bound {
+        entity_ids.clone()
+    } else {
+        vec![change.entity_id.to_string()]
+    };
+    for eid in targets {
+        let (in_range, above_val, below_val) = match eval_numeric_state(
+            app,
+            a,
+            &eid,
+            above.as_ref(),
+            below.as_ref(),
+            attribute.as_deref(),
+            value_template.as_deref(),
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                a.entity
+                    .log("ERROR", &format!("numeric_state trigger: {e}"));
+                continue;
+            }
+        };
+        let was_in_range = {
+            let mut map = a.numeric_armed.lock().unwrap();
+            let prev = map.get(&(t.idx, eid.clone())).copied().unwrap_or(false);
+            map.insert((t.idx, eid.clone()), in_range);
+            prev
+        };
+        if !in_range {
+            if let Some(old) = a.pending.lock().unwrap().remove(&(t.idx, eid.clone())) {
+                old.abort();
+            }
+            continue;
+        }
+        if was_in_range {
+            continue;
+        }
+        let json = |s: &Option<Arc<crate::state::State>>| s.as_ref().map(|s| s.json());
+        let mut data = t.data("numeric_state");
+        data.insert("entity_id".into(), eid.clone().into());
+        data.insert("below".into(), below_val.map_or(Value::Null, |v| json!(v)));
+        data.insert("above".into(), above_val.map_or(Value::Null, |v| json!(v)));
+        if eid == *change.entity_id {
+            data.insert("from_state".into(), json(&change.old).into());
+            data.insert("to_state".into(), json(&change.new).into());
+        } else {
+            let cur = app.states.get(&eid).map(|s| s.json());
+            data.insert("from_state".into(), cur.clone().into());
+            data.insert("to_state".into(), cur.into());
+        }
+        data.insert("for".into(), Value::Null);
+        data.insert(
+            "description".into(),
+            format!("numeric state of {eid}").into(),
+        );
+        let Some(for_) = for_ else {
+            fire(app, a, t, data, Some(change.context.clone()));
+            continue;
+        };
+        let mut scope = attach_vars(app, a);
+        scope.insert("trigger".into(), data.clone().into());
+        let secs = match render_complex(&app.states, for_, &scope).and_then(|v| time_period(&v)) {
+            Ok(s) => s,
+            Err(e) => {
+                a.entity
+                    .log("ERROR", &format!("Error rendering numeric_state for: {e}"));
+                continue;
+            }
+        };
+        data.insert(
+            "for".into(),
+            json!({"__type": "<class 'datetime.timedelta'>", "total_seconds": secs}),
+        );
+        let (mut rx, _) = app.states.subscribe();
+        let (app2, a2, ctx, eid2) = (app.clone(), a.clone(), change.context.clone(), eid.clone());
+        let ti = t.idx;
+        let above_c = above.clone();
+        let below_c = below.clone();
+        let attr_c = attribute.clone();
+        let vt_c = value_template.clone();
+        let handle = tokio::spawn(async move {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(secs);
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep_until(deadline) => break,
+                    r = rx.recv() => match r {
+                        Ok(c) if *c.entity_id == eid2
+                            || bound_entity(above_c.as_ref()) == Some(&*c.entity_id)
+                            || bound_entity(below_c.as_ref()) == Some(&*c.entity_id) => {
+                            let ok = eval_numeric_state(
+                                &app2, &a2, &eid2, above_c.as_ref(), below_c.as_ref(),
+                                attr_c.as_deref(), vt_c.as_deref()
+                            ).is_ok_and(|(ok, _, _)| ok);
+                            if !ok {
+                                return;
+                            }
+                        }
+                        Err(RecvError::Closed) => return,
+                        _ => {}
+                    }
+                }
+            }
+            fire(&app2, &a2, &a2.triggers[ti], data, Some(ctx));
+        });
+        if let Some(old) = a
+            .pending
+            .lock()
+            .unwrap()
+            .insert((t.idx, eid), handle.abort_handle())
+        {
+            old.abort();
+        }
+    }
+}
+
+fn eval_template_trigger(app: &App, a: &Automation, tpl: &str) -> TemplateState {
+    let vars = Value::Object(attach_vars(app, a));
+    match template::render(&app.states, tpl, &vars, false) {
+        Ok((text, listeners)) => TemplateState {
+            prev: text.eq_ignore_ascii_case("true"),
+            listeners,
+        },
+        Err(e) => {
+            a.entity.log("ERROR", &format!("template trigger: {e}"));
+            TemplateState {
+                prev: false,
+                listeners: template::Listeners::default(),
+            }
+        }
+    }
+}
+
+fn on_template_trigger(
+    app: &Arc<App>,
+    a: &Arc<Automation>,
+    t: &Trigger,
+    change: &Change,
+    lifecycle: bool,
+) {
+    let Kind::Template {
+        value_template,
+        for_,
+    } = &t.kind
+    else {
+        return;
+    };
+    let should_eval = {
+        let map = a.template_state.lock().unwrap();
+        map.get(&t.idx)
+            .is_some_and(|st| st.listeners.matches(&change.entity_id, lifecycle))
+    };
+    if !should_eval {
+        return;
+    }
+    let next = eval_template_trigger(app, a, value_template);
+    let next_prev = next.prev;
+    let prev = {
+        let mut map = a.template_state.lock().unwrap();
+        let prev = map.get(&t.idx).is_some_and(|st| st.prev);
+        map.insert(t.idx, next);
+        prev
+    };
+    if !next_prev {
+        if let Some(old) = a.pending.lock().unwrap().remove(&(t.idx, String::new())) {
+            old.abort();
+        }
+        return;
+    }
+    if prev {
+        return;
+    }
+    let json = |s: &Option<Arc<crate::state::State>>| s.as_ref().map(|s| s.json());
+    let mut data = t.data("template");
+    data.insert("entity_id".into(), (*change.entity_id).into());
+    data.insert("from_state".into(), json(&change.old).into());
+    data.insert("to_state".into(), json(&change.new).into());
+    data.insert("for".into(), Value::Null);
+    data.insert(
+        "description".into(),
+        format!("{} via template", change.entity_id).into(),
+    );
+    let Some(for_) = for_ else {
+        fire(app, a, t, data, Some(change.context.clone()));
+        return;
+    };
+    let mut scope = attach_vars(app, a);
+    scope.insert("trigger".into(), data.clone().into());
+    let secs = match render_complex(&app.states, for_, &scope).and_then(|v| time_period(&v)) {
+        Ok(s) => s,
+        Err(e) => {
+            a.entity.log(
+                "ERROR",
+                &format!("Error rendering template trigger for: {e}"),
+            );
+            return;
+        }
+    };
+    data.insert(
+        "for".into(),
+        json!({"__type": "<class 'datetime.timedelta'>", "total_seconds": secs}),
+    );
+    let (mut rx, _) = app.states.subscribe();
+    let (app2, a2, ctx) = (app.clone(), a.clone(), change.context.clone());
+    let ti = t.idx;
+    let tpl = value_template.clone();
+    let handle = tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(secs);
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => break,
+                r = rx.recv() => match r {
+                    Ok(c) => {
+                        let lc = c.old.is_none() || c.new.is_none();
+                        let matches = a2.template_state.lock().unwrap().get(&ti)
+                            .is_some_and(|st| st.listeners.matches(&c.entity_id, lc));
+                        if matches {
+                            let st = eval_template_trigger(&app2, &a2, &tpl);
+                            let ok = st.prev;
+                            a2.template_state.lock().unwrap().insert(ti, st);
+                            if !ok {
+                                return;
+                            }
+                        }
+                    }
+                    Err(RecvError::Closed) => return,
+                    Err(RecvError::Lagged(_)) => {}
+                }
+            }
+        }
+        fire(&app2, &a2, &a2.triggers[ti], data, Some(ctx));
+    });
+    if let Some(old) = a
+        .pending
+        .lock()
+        .unwrap()
+        .insert((t.idx, String::new()), handle.abort_handle())
+    {
+        old.abort();
     }
 }
 
@@ -785,6 +1329,137 @@ async fn time_trigger(app: Arc<App>, a: Arc<Automation>, ti: usize, at: NaiveTim
                 .into(),
         );
         data.insert("description".into(), "time".into());
+        data.insert("entity_id".into(), Value::Null);
+        fire(&app, &a, t, data, None);
+    }
+}
+
+fn parse_time_expr(v: Option<&Value>, min: u32, max: u32) -> Result<Vec<u32>, String> {
+    let Some(v) = v else {
+        return Ok((min..=max).collect());
+    };
+    let mut out = match v {
+        Value::Number(n) => {
+            let x = n
+                .as_u64()
+                .and_then(|x| u32::try_from(x).ok())
+                .filter(|x| *x >= min && *x <= max)
+                .ok_or_else(|| format!("time_pattern: value {v} out of range {min}..={max}"))?;
+            vec![x]
+        }
+        Value::String(s) => {
+            let s = s.trim();
+            if s == "*" {
+                (min..=max).collect()
+            } else if let Some(rest) = s.strip_prefix('/') {
+                let step: u32 = rest
+                    .parse()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| format!("time_pattern: invalid step '{s}'"))?;
+                (min..=max).filter(|v| v % step == 0).collect()
+            } else {
+                s.split(',')
+                    .map(|part| {
+                        part.trim()
+                            .parse::<u32>()
+                            .ok()
+                            .filter(|x| *x >= min && *x <= max)
+                            .ok_or_else(|| {
+                                format!("time_pattern: value '{part}' out of range {min}..={max}")
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+        }
+        _ => return Err(format!("time_pattern: invalid expression {v}")),
+    };
+    out.sort_unstable();
+    out.dedup();
+    if out.is_empty() {
+        return Err("time_pattern: expression matched no values".into());
+    }
+    Ok(out)
+}
+
+fn find_time_pattern_at_or_after(
+    tz: &crate::config::Zone,
+    at_or_after: DateTime<Utc>,
+    hours: &[u32],
+    mins: &[u32],
+    secs: &[u32],
+) -> DateTime<Utc> {
+    let local = at_or_after + tz.offset(at_or_after);
+    let date = local.date_naive();
+    let start_hms = (local.hour(), local.minute(), local.second());
+    for d in 0..3 {
+        let day = date + chrono::Days::new(d);
+        let min_hms = if d == 0 { start_hms } else { (0, 0, 0) };
+        for &h in hours {
+            if h < min_hms.0 {
+                continue;
+            }
+            for &m in mins {
+                if (h, m) < (min_hms.0, min_hms.1) {
+                    continue;
+                }
+                for &s in secs {
+                    if (h, m, s) < min_hms {
+                        continue;
+                    }
+                    let t = NaiveTime::from_hms_opt(h, m, s).unwrap();
+                    let utc = tz.local_to_utc(day.and_time(t));
+                    if utc >= at_or_after {
+                        return utc;
+                    }
+                }
+            }
+        }
+    }
+    unreachable!("a time_pattern recurs within 3 days")
+}
+
+async fn time_pattern_trigger(app: Arc<App>, a: Arc<Automation>, ti: usize) {
+    #[cfg(test)]
+    let base = (Utc::now(), tokio::time::Instant::now());
+    let now = || {
+        #[cfg(test)]
+        return base.0 + (tokio::time::Instant::now() - base.1);
+        #[cfg(not(test))]
+        Utc::now()
+    };
+    let tz = &app.config.core.tz;
+    let Kind::TimePattern {
+        hours,
+        minutes,
+        seconds,
+    } = &a.triggers[ti].kind
+    else {
+        return;
+    };
+    let mut after = now() + chrono::Duration::seconds(1);
+    loop {
+        let cur = now();
+        let next = find_time_pattern_at_or_after(tz, cur.max(after), hours, minutes, seconds);
+        let left = (next - cur).to_std().unwrap_or_default();
+        if left > Duration::from_secs(60) {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            continue;
+        }
+        tokio::time::sleep(left).await;
+        after = next + chrono::Duration::seconds(1);
+        let t = &a.triggers[ti];
+        let fired = now();
+        let mut data = t.data("time_pattern");
+        data.insert(
+            "now".into(),
+            fired
+                .with_timezone(&tz.offset(fired))
+                .format("%Y-%m-%dT%H:%M:%S%.6f%:z")
+                .to_string()
+                .into(),
+        );
+        data.insert("description".into(), "time pattern".into());
         data.insert("entity_id".into(), Value::Null);
         fire(&app, &a, t, data, None);
     }
@@ -1350,5 +2025,230 @@ mod tests {
             next_time(&ams, t("2026-11-25T12:00:00Z"), at),
             t("2026-11-26T02:00:00Z")
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pr2_triggers_replay_ha_recording() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../compat/fixtures/step2/pr2-triggers-conditions.json"
+        ))
+        .unwrap();
+
+        // 1. numeric_state, template, homeassistant start & shutdown
+        let app = app(Some(
+            r#"
+- id: "ns_above_20"
+  triggers:
+    - trigger: numeric_state
+      entity_id: sensor.temp
+      above: 20
+  actions: []
+- id: "ns_range_10_30_attr"
+  triggers:
+    - trigger: numeric_state
+      entity_id: sensor.hum
+      attribute: level
+      above: 15
+      below: 25
+  actions: []
+- id: "ns_value_template"
+  triggers:
+    - trigger: numeric_state
+      entity_id: sensor.temp
+      value_template: "{{ float(state.state) * 2 }}"
+      above: 50
+  actions: []
+- id: "tmpl_both_on"
+  triggers:
+    - trigger: template
+      value_template: "{{ is_state('input_boolean.a', 'on') and is_state('input_boolean.b', 'on') }}"
+  actions: []
+- id: "ha_start"
+  triggers:
+    - trigger: homeassistant
+      event: start
+  actions: []
+- id: "ha_shutdown"
+  triggers:
+    - trigger: homeassistant
+      event: shutdown
+  actions: []
+"#,
+        ));
+        let set_raw = |id: &str, st: &str, attrs: Value| {
+            app.states.set(
+                id,
+                st,
+                attrs.as_object().unwrap().clone(),
+                Context::new(None),
+            );
+        };
+        set_raw("sensor.temp", "15", json!({}));
+        set_raw("sensor.hum", "50", json!({"level": 10}));
+        set_raw("input_boolean.a", "off", json!({}));
+        set_raw("input_boolean.b", "off", json!({}));
+
+        start(&app);
+        settle().await;
+
+        let ns_steps = [
+            ("sensor.temp", "19", json!({})),
+            ("sensor.temp", "20", json!({})),
+            ("sensor.temp", "21", json!({})),
+            ("sensor.temp", "26", json!({})),
+            ("sensor.temp", "unavailable", json!({})),
+            ("sensor.temp", "22", json!({})),
+            ("sensor.hum", "50", json!({"level": 20})),
+            ("sensor.hum", "50", json!({"level": 25})),
+            ("sensor.hum", "50", json!({"level": 22})),
+        ];
+        for (eid, st, attrs) in ns_steps {
+            set_raw(eid, st, attrs);
+            settle().await;
+        }
+
+        for (eid, st) in [
+            ("input_boolean.a", "on"),
+            ("input_boolean.b", "on"),
+            ("input_boolean.a", "on"),
+            ("input_boolean.b", "off"),
+            ("input_boolean.b", "on"),
+        ] {
+            set_raw(eid, st, json!({}));
+            settle().await;
+        }
+
+        stop(&app).await;
+        settle().await;
+
+        let trigger_vars = |id: &str| -> Vec<Value> {
+            app.traces
+                .list("automation", Some(id))
+                .into_iter()
+                .map(|item| {
+                    let t = app
+                        .traces
+                        .get("automation", id, item["run_id"].as_str().unwrap())
+                        .unwrap();
+                    t["trace"]["trigger/0"][0]["changed_variables"]["trigger"].clone()
+                })
+                .collect()
+        };
+
+        let expected = fixture["trigger_events"].as_array().unwrap();
+        let expected_for = |name: &str| -> Vec<Value> {
+            expected
+                .iter()
+                .filter(|e| e["name"] == name)
+                .map(|e| e["trigger"].clone())
+                .collect()
+        };
+
+        let strip_state_meta = |v: &mut Value| {
+            for key in ["from_state", "to_state"] {
+                if let Some(obj) = v.get_mut(key).and_then(Value::as_object_mut) {
+                    let eid = obj.get("entity_id").cloned().unwrap_or(Value::Null);
+                    let st = obj.get("state").cloned().unwrap_or(Value::Null);
+                    let attrs = obj.get("attributes").cloned().unwrap_or(json!({}));
+                    *obj = json!({"entity_id": eid, "state": st, "attributes": attrs})
+                        .as_object()
+                        .unwrap()
+                        .clone();
+                }
+            }
+        };
+
+        for name in [
+            "ns_above_20",
+            "ns_range_10_30_attr",
+            "ns_value_template",
+            "tmpl_both_on",
+            "ha_start",
+            "ha_shutdown",
+        ] {
+            let mut got = trigger_vars(name);
+            for g in &mut got {
+                strip_state_meta(g);
+            }
+            assert_eq!(got, expected_for(name), "trigger events for {name}");
+        }
+
+        // 2. time_pattern matching against HA's recorded sample times
+        let sample_times = [
+            "2026-11-24T00:00:00+00:00",
+            "2026-11-24T00:00:20+00:00",
+            "2026-11-24T00:15:00+00:00",
+            "2026-11-24T01:30:00+00:00",
+            "2026-11-24T02:30:00+00:00",
+            "2026-11-24T02:30:01+00:00",
+        ];
+        let utc = crate::config::Zone::utc();
+        for (cfg_str, expected_matches) in fixture["time_pattern_matches"].as_object().unwrap() {
+            let mut cfg: Value = serde_json::from_str(cfg_str).unwrap();
+            cfg["trigger"] = json!("time_pattern");
+            let t = parse_trigger(0, &cfg).unwrap();
+            let Kind::TimePattern {
+                hours,
+                minutes,
+                seconds,
+            } = t.kind
+            else {
+                panic!("expected TimePattern");
+            };
+            let got: Vec<&str> = sample_times
+                .iter()
+                .copied()
+                .filter(|ts| {
+                    let dt = ts.parse::<DateTime<Utc>>().unwrap();
+                    find_time_pattern_at_or_after(&utc, dt, &hours, &minutes, &seconds) == dt
+                })
+                .collect();
+            let want: Vec<&str> = expected_matches
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            assert_eq!(got, want, "time_pattern {cfg_str}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn time_pattern_fires_and_numeric_for() {
+        let app = app(Some(
+            r#"
+- id: "tp"
+  triggers:
+    - trigger: time_pattern
+      seconds: "/20"
+  actions: []
+- id: "ns_for"
+  triggers:
+    - trigger: numeric_state
+      entity_id: sensor.temp
+      above: 25
+      for: { seconds: 5 }
+  actions: []
+"#,
+        ));
+        app.states
+            .set("sensor.temp", "20", Map::new(), Context::new(None));
+        start(&app);
+        // 60 s has 3 * 20 s ticks
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert_eq!(app.traces.list("automation", Some("tp")).len(), 3);
+
+        app.states
+            .set("sensor.temp", "26", Map::new(), Context::new(None));
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        app.states
+            .set("sensor.temp", "24", Map::new(), Context::new(None));
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        assert!(app.traces.list("automation", Some("ns_for")).is_empty());
+
+        app.states
+            .set("sensor.temp", "27", Map::new(), Context::new(None));
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert_eq!(app.traces.list("automation", Some("ns_for")).len(), 1);
     }
 }

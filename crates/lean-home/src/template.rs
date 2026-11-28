@@ -22,7 +22,7 @@ pub fn set_time_zone(tz: Zone) {
 
 /// The clock templates read; tests freeze it, as HA's do.
 #[cfg(not(test))]
-fn now_utc() -> DateTime<Utc> {
+pub fn now_utc() -> DateTime<Utc> {
     Utc::now()
 }
 
@@ -30,11 +30,11 @@ fn now_utc() -> DateTime<Utc> {
 static FROZEN_NOW: RwLock<Option<DateTime<Utc>>> = RwLock::new(None);
 
 #[cfg(test)]
-fn now_utc() -> DateTime<Utc> {
+pub fn now_utc() -> DateTime<Utc> {
     FROZEN_NOW.read().unwrap().unwrap_or_else(Utc::now)
 }
 
-fn local_tz() -> Zone {
+pub fn local_tz() -> Zone {
     TIME_ZONE.read().unwrap().clone().unwrap_or_else(Zone::utc)
 }
 

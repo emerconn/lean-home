@@ -1,0 +1,310 @@
+{
+  "ha_version": "2026.11.2",
+  "trigger_events": [
+    {
+      "name": "ns_above_20",
+      "trigger": {
+        "id": "0",
+        "idx": "0",
+        "alias": null,
+        "platform": "numeric_state",
+        "entity_id": "sensor.temp",
+        "below": null,
+        "above": 20.0,
+        "from_state": {
+          "entity_id": "sensor.temp",
+          "state": "20",
+          "attributes": {}
+        },
+        "to_state": {
+          "entity_id": "sensor.temp",
+          "state": "21",
+          "attributes": {}
+        },
+        "for": null,
+        "description": "numeric state of sensor.temp"
+      }
+    },
+    {
+      "name": "ns_value_template",
+      "trigger": {
+        "id": "0",
+        "idx": "0",
+        "alias": null,
+        "platform": "numeric_state",
+        "entity_id": "sensor.temp",
+        "below": null,
+        "above": 50.0,
+        "from_state": {
+          "entity_id": "sensor.temp",
+          "state": "21",
+          "attributes": {}
+        },
+        "to_state": {
+          "entity_id": "sensor.temp",
+          "state": "26",
+          "attributes": {}
+        },
+        "for": null,
+        "description": "numeric state of sensor.temp"
+      }
+    },
+    {
+      "name": "ns_above_20",
+      "trigger": {
+        "id": "0",
+        "idx": "0",
+        "alias": null,
+        "platform": "numeric_state",
+        "entity_id": "sensor.temp",
+        "below": null,
+        "above": 20.0,
+        "from_state": {
+          "entity_id": "sensor.temp",
+          "state": "unavailable",
+          "attributes": {}
+        },
+        "to_state": {
+          "entity_id": "sensor.temp",
+          "state": "22",
+          "attributes": {}
+        },
+        "for": null,
+        "description": "numeric state of sensor.temp"
+      }
+    },
+    {
+      "name": "ns_range_10_30_attr",
+      "trigger": {
+        "id": "0",
+        "idx": "0",
+        "alias": null,
+        "platform": "numeric_state",
+        "entity_id": "sensor.hum",
+        "below": 25.0,
+        "above": 15.0,
+        "from_state": {
+          "entity_id": "sensor.hum",
+          "state": "50",
+          "attributes": {
+            "level": 10
+          }
+        },
+        "to_state": {
+          "entity_id": "sensor.hum",
+          "state": "50",
+          "attributes": {
+            "level": 20
+          }
+        },
+        "for": null,
+        "description": "numeric state of sensor.hum"
+      }
+    },
+    {
+      "name": "ns_range_10_30_attr",
+      "trigger": {
+        "id": "0",
+        "idx": "0",
+        "alias": null,
+        "platform": "numeric_state",
+        "entity_id": "sensor.hum",
+        "below": 25.0,
+        "above": 15.0,
+        "from_state": {
+          "entity_id": "sensor.hum",
+          "state": "50",
+          "attributes": {
+            "level": 25
+          }
+        },
+        "to_state": {
+          "entity_id": "sensor.hum",
+          "state": "50",
+          "attributes": {
+            "level": 22
+          }
+        },
+        "for": null,
+        "description": "numeric state of sensor.hum"
+      }
+    },
+    {
+      "name": "tmpl_both_on",
+      "trigger": {
+        "platform": "template",
+        "entity_id": "input_boolean.b",
+        "from_state": {
+          "entity_id": "input_boolean.b",
+          "state": "off",
+          "attributes": {}
+        },
+        "to_state": {
+          "entity_id": "input_boolean.b",
+          "state": "on",
+          "attributes": {}
+        },
+        "id": "0",
+        "idx": "0",
+        "alias": null,
+        "for": null,
+        "description": "input_boolean.b via template"
+      }
+    },
+    {
+      "name": "tmpl_both_on",
+      "trigger": {
+        "platform": "template",
+        "entity_id": "input_boolean.b",
+        "from_state": {
+          "entity_id": "input_boolean.b",
+          "state": "off",
+          "attributes": {}
+        },
+        "to_state": {
+          "entity_id": "input_boolean.b",
+          "state": "on",
+          "attributes": {}
+        },
+        "id": "0",
+        "idx": "0",
+        "alias": null,
+        "for": null,
+        "description": "input_boolean.b via template"
+      }
+    },
+    {
+      "name": "ha_start",
+      "trigger": {
+        "id": "0",
+        "idx": "0",
+        "alias": null,
+        "platform": "homeassistant",
+        "event": "start",
+        "description": "Home Assistant starting"
+      }
+    },
+    {
+      "name": "ha_shutdown",
+      "trigger": {
+        "id": "0",
+        "idx": "0",
+        "alias": null,
+        "platform": "homeassistant",
+        "event": "shutdown",
+        "description": "Home Assistant stopping"
+      }
+    }
+  ],
+  "time_pattern_matches": {
+    "{\"minutes\": \"/15\"}": [
+      "2026-11-24T00:00:00+00:00",
+      "2026-11-24T00:15:00+00:00",
+      "2026-11-24T01:30:00+00:00",
+      "2026-11-24T02:30:00+00:00"
+    ],
+    "{\"hours\": \"/2\", \"minutes\": 30}": [
+      "2026-11-24T02:30:00+00:00"
+    ],
+    "{\"hours\": \"*\", \"minutes\": \"/30\", \"seconds\": 0}": [
+      "2026-11-24T00:00:00+00:00",
+      "2026-11-24T01:30:00+00:00",
+      "2026-11-24T02:30:00+00:00"
+    ],
+    "{\"seconds\": \"/20\"}": [
+      "2026-11-24T00:00:00+00:00",
+      "2026-11-24T00:00:20+00:00",
+      "2026-11-24T00:15:00+00:00",
+      "2026-11-24T01:30:00+00:00",
+      "2026-11-24T02:30:00+00:00"
+    ]
+  },
+  "time_conditions": [
+    {
+      "config": {
+        "condition": "time",
+        "after": "08:00:00",
+        "before": "17:00:00"
+      },
+      "results": {
+        "2026-11-24T05:59:59+00:00": false,
+        "2026-11-24T06:00:00+00:00": false,
+        "2026-11-24T08:00:00+00:00": true,
+        "2026-11-24T12:00:00+00:00": true,
+        "2026-11-24T17:00:00+00:00": false,
+        "2026-11-24T22:00:00+00:00": false,
+        "2026-11-24T23:00:00+00:00": false
+      }
+    },
+    {
+      "config": {
+        "condition": "time",
+        "after": "22:00:00",
+        "before": "06:00:00"
+      },
+      "results": {
+        "2026-11-24T05:59:59+00:00": true,
+        "2026-11-24T06:00:00+00:00": false,
+        "2026-11-24T08:00:00+00:00": false,
+        "2026-11-24T12:00:00+00:00": false,
+        "2026-11-24T17:00:00+00:00": false,
+        "2026-11-24T22:00:00+00:00": true,
+        "2026-11-24T23:00:00+00:00": true
+      }
+    },
+    {
+      "config": {
+        "condition": "time",
+        "after": "08:00:00",
+        "weekday": [
+          "mon",
+          "tue"
+        ]
+      },
+      "results": {
+        "2026-11-24T05:59:59+00:00": false,
+        "2026-11-24T06:00:00+00:00": false,
+        "2026-11-24T08:00:00+00:00": true,
+        "2026-11-24T12:00:00+00:00": true,
+        "2026-11-24T17:00:00+00:00": true,
+        "2026-11-24T22:00:00+00:00": true,
+        "2026-11-24T23:00:00+00:00": true
+      }
+    },
+    {
+      "config": {
+        "condition": "time",
+        "after": "08:00:00",
+        "weekday": [
+          "wed",
+          "thu"
+        ]
+      },
+      "results": {
+        "2026-11-24T05:59:59+00:00": false,
+        "2026-11-24T06:00:00+00:00": false,
+        "2026-11-24T08:00:00+00:00": false,
+        "2026-11-24T12:00:00+00:00": false,
+        "2026-11-24T17:00:00+00:00": false,
+        "2026-11-24T22:00:00+00:00": false,
+        "2026-11-24T23:00:00+00:00": false
+      }
+    },
+    {
+      "config": {
+        "condition": "time",
+        "after": "input_datetime.start",
+        "before": "input_datetime.end"
+      },
+      "results": {
+        "2026-11-24T05:59:59+00:00": true,
+        "2026-11-24T06:00:00+00:00": true,
+        "2026-11-24T08:00:00+00:00": true,
+        "2026-11-24T12:00:00+00:00": true,
+        "2026-11-24T17:00:00+00:00": true,
+        "2026-11-24T22:00:00+00:00": true,
+        "2026-11-24T23:00:00+00:00": true
+      }
+    }
+  ]
+}
